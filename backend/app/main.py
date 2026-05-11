@@ -11,6 +11,7 @@ Responsibilities (grow with each phase):
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings
 
@@ -46,7 +47,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # P0-5: add CORSMiddleware — origins from settings.ALLOWED_ORIGINS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS.split(","),
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
     # P0-5: add request-ID middleware for distributed tracing
     # Phase 1: include routers/routes.py and routers/risk.py
 
