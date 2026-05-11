@@ -1,0 +1,159 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "12264175801507707963"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region — defaults to the resource group's own region"
+      }
+    },
+    "containerAppEnvName": {
+      "type": "string",
+      "defaultValue": "route-recommender-env",
+      "metadata": {
+        "description": "Shared compute environment that hosts one or more Container Apps"
+      }
+    },
+    "containerAppName": {
+      "type": "string",
+      "defaultValue": "route-recommender-backend",
+      "metadata": {
+        "description": "Name of the Container App (the actual running service)"
+      }
+    },
+    "containerImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Full image ref with tag, e.g. ghcr.io/owner/repo:abc1234"
+      }
+    },
+    "cosmosConnectionString": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Cosmos DB connection string — never hard-code, always injected at deploy time"
+      }
+    },
+    "orsApiKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "OpenRouteService API key"
+      }
+    },
+    "allowedOrigins": {
+      "type": "string",
+      "defaultValue": "http://localhost:3000",
+      "metadata": {
+        "description": "Comma-separated CORS origins, e.g. https://myapp.vercel.app"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('containerAppEnvName')]",
+      "location": "[parameters('location')]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[parameters('containerAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppEnvName'))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 8000,
+            "allowInsecure": false,
+            "transport": "auto"
+          },
+          "secrets": [
+            {
+              "name": "cosmos-connection-string",
+              "value": "[parameters('cosmosConnectionString')]"
+            },
+            {
+              "name": "ors-api-key",
+              "value": "[parameters('orsApiKey')]"
+            }
+          ]
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "backend",
+              "image": "[parameters('containerImage')]",
+              "resources": {
+                "cpu": "[json('0.25')]",
+                "memory": "0.5Gi"
+              },
+              "env": [
+                {
+                  "name": "COSMOS_CONNECTION_STRING",
+                  "secretRef": "cosmos-connection-string"
+                },
+                {
+                  "name": "ORS_API_KEY",
+                  "secretRef": "ors-api-key"
+                },
+                {
+                  "name": "ALLOWED_ORIGINS",
+                  "value": "[parameters('allowedOrigins')]"
+                },
+                {
+                  "name": "LOG_FORMAT",
+                  "value": "json"
+                }
+              ],
+              "probes": [
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/health",
+                    "port": 8000
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 0,
+            "maxReplicas": 2,
+            "rules": [
+              {
+                "name": "http-scaling",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "10"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppEnvName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "containerAppUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+/* WHY: these three directives inject Tailwind's base reset, component
+   classes, and utility classes at build time via the PostCSS plugin */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

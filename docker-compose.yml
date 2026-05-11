@@ -1,0 +1,29 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    # WHY: env_file injects all .env vars into the container at runtime,
+    # keeping secrets out of the image layers
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  frontend:
+    # WHY: use the node image directly in dev so Vite HMR works over the volume mount
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      # WHY: anonymous volume shadows the host's node_modules so the container
+      # uses its own platform-correct binaries, not whatever's on the Windows host
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    command: sh -c "npm install && npm run dev -- --host --port 3000"
+    environment:
+      # WHY: baked at runtime for dev; in production this is set in Vercel env vars
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
