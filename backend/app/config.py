@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # --- CORS ---
     # WHY: stored as a comma-separated string in env; split to list at usage
     # site rather than here, to keep the Settings model serialisable to JSON
-    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,https://route-recommender-web.vercel.app"
 
     # --- Logging ---
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
