@@ -1,0 +1,44 @@
+name: Frontend CI
+
+# WHY: Vercel handles the actual deployment via its GitHub integration.
+# This workflow only runs a build-check gate on PRs to catch compilation
+# errors before they reach master (and trigger a broken Vercel deploy).
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          # WHY: VITE_API_BASE_URL must exist at build time or import.meta.env gives undefined.
+          # A placeholder value here lets CI prove the bundle compiles; the real
+          # value is set in the Vercel dashboard per environment (Production/Preview).
+          VITE_API_BASE_URL: https://placeholder.azurecontainerapps.io

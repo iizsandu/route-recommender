@@ -354,35 +354,7 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 
 ### Current Task
 
-**TASK P0-3 — Deploy backend stub to Azure Container Apps**
-
-**Files to create:**
-- `README.md` — project overview, link to sister repo, setup instructions
-- `.gitignore` — Python, Node, IDE, MLflow, models/, .env, secrets
-- `.env.example` — all env vars documented (no values)
-- `backend/requirements.txt`
-- `backend/app/__init__.py`
-- `backend/app/main.py` — minimal FastAPI app with `/health` endpoint
-- `backend/app/config.py` — Pydantic Settings (CosmosDB, ORS_API_KEY, etc.)
-- `backend/Dockerfile`
-- `frontend/package.json` — Vite + React 18 + Tailwind + MapLibre + Axios
-- `frontend/vite.config.js`
-- `frontend/index.html`, `frontend/src/main.jsx`, `frontend/src/App.jsx`
-  (placeholder "Hello world")
-- `frontend/Dockerfile` (multi-stage build)
-- `docker-compose.yml` — backend + frontend for local dev
-- `pyproject.toml` for backend with ruff + black + pytest config
-
-**Acceptance criteria:**
-- `docker compose up` starts both services
-- `curl http://localhost:8000/health` returns `{"status": "ok"}`
-- Frontend at `http://localhost:3000` shows placeholder
-- `.env.example` documents every variable used in `config.py`
-
-**Do NOT:**
-- Add any business logic yet (no risk model, no routing)
-- Add auth, database writes, or external API calls
-- Install heavy dependencies (lightgbm, torch) yet
+**TASK P0-4 — Deploy frontend to Vercel**
 
 ---
 
@@ -786,6 +758,23 @@ LOG_FORMAT=json
 ## Sprint Completed Log
 
 > Move tasks here when fully implemented + tested + deployed.
+
+### P0-4 — Deploy frontend to Vercel (2026-05-11)
+- `frontend/.env.example` — documents `VITE_API_BASE_URL` and `VITE_MAPTILER_KEY` with `VITE_*` prefix rationale
+- `.github/workflows/frontend-ci.yml` — build-check gate on PRs to master; passes dummy `VITE_API_BASE_URL` so build doesn't fail on missing env var
+- `infra/vercel/README.md` — one-time setup steps (import repo, set env var scopes, CORS update, redeploy)
+- `frontend/src/App.jsx` — added `useApiHealth` hook: fetches `/api/health` (proxy in dev) or `VITE_API_BASE_URL/health` (production); renders "API: checking/online/offline" badge
+- `npx vite build` passes locally (31 modules, no errors)
+- Public URL live: https://route-recommender-web.vercel.app/
+
+### P0-3 — Deploy backend stub to Azure Container Apps (2026-05-12)
+- `infra/azure/container-app.bicep` — Bicep IaC for Container App Environment + Container App (Consumption plan, min=0/max=2 replicas, readiness probe on `/health`)
+- `infra/azure/container-app.json` — compiled ARM JSON (deployed via this file; `az deployment group create --template-file .bicep` silently fails on some CLI versions)
+- `infra/azure/README.md` — one-time setup steps, OIDC note, rollback instructions
+- `.github/workflows/backend-deploy.yml` — builds image, pushes to GHCR, smoke-tests `/health`, prints deploy command. Azure deploy step removed (student account blocks app registration for OIDC)
+- `scripts/deploy.ps1` — one-command local deploy: `az containerapp update` + health verify
+- Public URL live: `https://route-recommender-backend.whitecoast-8c771146.eastasia.azurecontainerapps.io/health` returns `{"status":"ok"}`
+- Deviation from spec: automated Azure deploy via GitHub Actions not possible on student account (Entra ID app registration blocked). Replaced with manual `scripts/deploy.ps1` run after each CI build.
 
 ### P0-2 — Cosmos DB read-only client (2026-05-06)
 - `backend/app/services/cosmos_client.py` — async `CosmosReadOnlyClient` with `connect()`, `close()`, `fetch_crime_records(since=)`

@@ -2,6 +2,25 @@
 
 ---
 
+## P0-4 — Deploy Frontend to Vercel (2026-05-11)
+
+### Concept MCQ results (5 questions)
+- Q1 B ✓ — Vite strips non-`VITE_*` vars at build time; browser gets `undefined`
+- Q2 C ✓ — Vercel atomic deploy: failed build cancels, old build stays live
+- Q3 C ✗ → correct: B — `npm run build` checks compilation, NOT runtime API reachability
+- Q4 A ✗ → correct: B — mixed content (HTTPS frontend + HTTP backend) blocks fetch regardless of CORS
+- Q5 B ✓ — Vercel env var scopes (Production / Preview / Development) handle per-environment URLs
+
+### Key ideas to retain
+- `VITE_API_BASE_URL` must exist at *build time* — baked into the bundle, not read at runtime. A missing var means `undefined` in the browser.
+- Local dev uses the vite.config.js proxy (`/api/health` → `localhost:8000/health`), so `VITE_API_BASE_URL` can be unset locally.
+- The GitHub Actions CI workflow only proves the bundle compiles. Vercel's own build is what deploys.
+
+### Skipped
+- Step 2 guided walkthrough and Step 3 post-write quiz skipped by user request (protocol break confirmed).
+
+---
+
 ## P0-2 — Cosmos DB Read-Only Client (2026-05-06)
 
 ### 3 things understood that weren't before
