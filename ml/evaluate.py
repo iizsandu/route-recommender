@@ -22,6 +22,10 @@ from ml.kde_model import FixedBandwidthKDE  # noqa: F401 — needed for unpickli
 
 logger = logging.getLogger(__name__)
 
+_DB = Path(__file__).resolve().parents[1] / "ml" / "artifacts" / "mlruns.db"
+mlflow.set_tracking_uri(f"sqlite:///{_DB.as_posix()}")
+mlflow.set_experiment("kde_evaluation")
+
 ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 
 # Geographic grid covering Delhi-NCR.
@@ -296,6 +300,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     result = run(Path(sys.argv[1]), Path(sys.argv[2]))
-    print("\n── Evaluation results ──")
+    print("\n-- Evaluation results --")
     for k, v in result.items():
         print(f"  {k:40s} {v}")

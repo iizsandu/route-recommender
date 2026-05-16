@@ -40,6 +40,9 @@ import pandas as pd
 from sklearn.metrics import average_precision_score
 from sklearn.preprocessing import LabelEncoder
 
+_DB = Path(__file__).resolve().parents[1] / "ml" / "artifacts" / "mlruns.db"
+mlflow.set_tracking_uri(f"sqlite:///{_DB.as_posix()}")
+
 logger = logging.getLogger(__name__)
 
 SNAPSHOT_DIR = Path(__file__).parent / "data" / "snapshots"

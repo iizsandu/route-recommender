@@ -32,6 +32,13 @@ import numpy as np
 import pandas as pd
 import mlflow
 
+# WHY absolute path from __file__: makes the tracking URI CWD-independent so
+# train_kde.py, train_lightgbm.py, and evaluate.py all write to the same store
+# regardless of which directory the user runs from.
+_DB = Path(__file__).resolve().parents[1] / "ml" / "artifacts" / "mlruns.db"
+mlflow.set_tracking_uri(f"sqlite:///{_DB.as_posix()}")
+mlflow.set_experiment("kde_training")
+
 from ml.data.category_mapping import (
     FEMALE_WEIGHTS,
     KDE_ELIGIBLE,
