@@ -1,0 +1,26 @@
+# Retrieval pipeline — local index-build deps only
+# Run: pip install -r retrieval/requirements.txt
+# These are NOT added to backend/requirements.txt (too heavy for the production image)
+
+# MongoDB — reads crime2.extracted + crime2.articles2
+pymongo==4.6.3
+
+# Summarization — distilbart-cnn-6-6
+transformers==4.40.0
+# GPU (CUDA 12.4 wheel works with CUDA 13.0 drivers — backward compatible):
+#   pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+# CPU only:
+#   pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0
+
+# Dense embedding — BAAI/bge-small-en-v1.5 (384 dims, ~130 MB model download)
+sentence-transformers==2.7.0
+
+# Sparse vectors — BM25
+rank-bm25==0.2.2
+
+# Qdrant vector database client
+qdrant-client==1.9.1
+
+# Progress bars
+tqdm==4.66.2

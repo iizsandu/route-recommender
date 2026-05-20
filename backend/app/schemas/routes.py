@@ -1,7 +1,7 @@
 # backend/app/schemas/routes.py
 
 from datetime import datetime, timezone
-from typing import Literal, Union
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,21 @@ class RouteRequest(BaseModel):
     )
 
 
+class IncidentResult(BaseModel):
+    """A historically reported crime incident near a route segment."""
+    crime_macro:    Optional[str] = None
+    crime_type:     Optional[str] = None
+    lat:            Optional[float] = None
+    lng:            Optional[float] = None
+    crime_date:     Optional[str] = None
+    summary:        str
+    url:            str
+    location_exact: Optional[str] = None
+    # WHY rrf_score exposed: useful for frontend to sort/filter if needed,
+    # and helps during debugging to see why an incident ranked where it did.
+    rrf_score:      float = 0.0
+
+
 class RouteOption(BaseModel):
     geometry:     dict        # GeoJSON LineString
     duration_sec: float
@@ -30,7 +45,14 @@ class RouteOption(BaseModel):
     # WHY Literal: enforces the 3-band contract at the type level. The raw
     # float score is never returned to the client — only the band label.
     risk_band:    Literal["Low", "Medium", "High"]
+    # WHY default=[]: if Qdrant is unavailable, the field is present but empty
+    # rather than absent — frontend doesn't need to null-check the field.
+    nearby_incidents: list[IncidentResult] = []
 
 
 class RouteResponse(BaseModel):
     routes: list[RouteOption]
+    framing_note: str = (
+        "Nearby incidents represent historically reported crimes from news sources. "
+        "This is not a prediction of future crime."
+    )

@@ -1,5 +1,5 @@
 // frontend/src/App.jsx
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouteRecommend } from './hooks/useRouteRecommend'
 import DisclaimerModal, { hasAcknowledged } from './components/DisclaimerModal'
 import RouteForm from './components/RouteForm'
@@ -9,8 +9,22 @@ import MapView from './components/MapView'
 export default function App() {
   const [disclaimerOpen, setDisclaimerOpen] = useState(!hasAcknowledged())
   const [selectedIdx, setSelectedIdx]       = useState(0)
+  const [pinLocations, setPinLocations]     = useState(null)
 
   const { routes, loading, error, recommend } = useRouteRecommend()
+
+  // Auto-pin origin + destination from the route geometry whenever routes arrive.
+  // GeoJSON coordinates are [lng, lat] — note index reversal.
+  useEffect(() => {
+    if (!routes.length) return
+    const coords = routes[0].geometry.coordinates
+    const first = coords[0]
+    const last  = coords[coords.length - 1]
+    setPinLocations({
+      origin:      { lng: first[0], lat: first[1] },
+      destination: { lng: last[0],  lat: last[1]  },
+    })
+  }, [routes])
 
   async function handleFormSubmit(params) {
     setSelectedIdx(0)
@@ -38,7 +52,7 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel */}
         <aside className="w-80 shrink-0 bg-white border-r overflow-y-auto p-4 space-y-4">
-          <RouteForm onSubmit={handleFormSubmit} loading={loading} />
+          <RouteForm onSubmit={handleFormSubmit} onPinLocations={setPinLocations} loading={loading} />
 
           {error && (
             <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
@@ -57,6 +71,7 @@ export default function App() {
             routes={routes}
             selectedIdx={selectedIdx}
             onSelectRoute={setSelectedIdx}
+            pinLocations={pinLocations}
           />
         </main>
       </div>

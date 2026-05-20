@@ -28,7 +28,10 @@ from app.config import Settings
 from app.utils.limiter import limiter
 from app.routers import routes as routes_router
 from app.routers import risk as risk_router
+from app.routers import search as search_router
+from app.routers import geocode as geocode_router
 from app.services.risk_model import load_model, load_lightgbm_models, reload_from_registry
+from app.services import retrieval_service
 
 settings = Settings()
 
@@ -91,6 +94,18 @@ async def lifespan(_app: FastAPI):
             logger.info("lightgbm ensemble enabled")
         except Exception as exc:
             logger.warning("LightGBM model load failed — ensemble disabled", error=str(exc))
+
+    # Initialise retrieval service (Qdrant + bge-small + BM25).
+    # WHY non-fatal: retrieval is local-only; production runs without Qdrant.
+    # init() returns False gracefully if QDRANT_HOST is empty or unreachable.
+    bm25_path = Path(settings.BM25_MODEL_PATH)
+    if not bm25_path.is_absolute():
+        bm25_path = _repo_root / bm25_path
+    retrieval_service.init(
+        qdrant_host=settings.QDRANT_HOST,
+        qdrant_port=settings.QDRANT_PORT,
+        bm25_model_path=bm25_path,
+    )
 
     # Start background reload loop — checks MLflow registry every hour.
     reload_task = asyncio.create_task(
@@ -159,10 +174,10 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.include_router(routes_router.router)
     app.include_router(risk_router.router)
+    app.include_router(search_router.router)
+    app.include_router(geocode_router.router)
 
-    # WHY instrument after routers: Instrumentator wraps the fully-built app,
-    # so all routes (including /routes/recommend) appear in /metrics labels.
-    # expose() adds GET /metrics — no auth needed for portfolio demo traffic.
+
     Instrumentator().instrument(app).expose(app)
 
     return app

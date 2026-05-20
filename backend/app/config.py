@@ -83,3 +83,17 @@ class Settings(BaseSettings):
     # Ensemble blend weights. Must sum to 1.0 (enforced in risk_model.py).
     KDE_ENSEMBLE_WEIGHT: float = 0.7
     LGB_ENSEMBLE_WEIGHT: float = 0.3
+
+    # --- Geocoding ---
+    # Primary geocoder: Mappls (MapMyIndia). Empty = skip Mappls, fall straight to Nominatim.
+    MAPPLS_API_KEY: str = ""
+
+    # --- Retrieval (Qdrant + hybrid search) ---
+    # WHY empty default: if QDRANT_HOST is not set, the retrieval service is
+    # a no-op — /routes/recommend still works, just without nearby_incidents.
+    # Set to "localhost" in .env when running Qdrant via docker-compose locally.
+    QDRANT_HOST: str = ""
+    QDRANT_PORT: int = 6333
+    # Path to the BM25 model pickle produced by retrieval/pipeline.py.
+    # Relative paths are anchored to repo root at startup.
+    BM25_MODEL_PATH: str = "retrieval/bm25_model.pkl"

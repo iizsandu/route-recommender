@@ -1,4 +1,13 @@
 services:
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "6333:6333"
+    volumes:
+      # WHY: persist the index on disk so a container restart doesn't wipe the built index
+      - ./qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
@@ -7,6 +16,8 @@ services:
     # keeping secrets out of the image layers
     env_file:
       - .env
+    depends_on:
+      - qdrant
     restart: unless-stopped
 
   frontend:
