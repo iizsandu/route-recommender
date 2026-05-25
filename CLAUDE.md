@@ -40,9 +40,11 @@ for routing.
 - Reviews, user-generated content
 - Multi-modal routing (metro + walk, etc.)
 
-**Current state:** Empty repo. Sister repo Cosmos DB has ~5,000 valid
-Delhi-NCR crime records (out of ~8,000 total — the rest are non-crime
-articles or outside Delhi).
+**Current state:** Fully functional app. Routes, risk heatmap (per-category
+KDE PNGs), nearby incidents (Qdrant hybrid search + BM25), and A/B map pins
+all working end-to-end. 8,797 crime records ingested from Cosmos DB; 4,655
+in KDE pool across 8 categories. Geocoding uses Mappls primary + Nominatim
+fallback (ORS Pelias removed). All Phase 0–6 work complete.
 
 **Tech Stack:** Python 3.11+, FastAPI, React 18 + Vite, MapLibre GL JS,
 OpenRouteService API, KDE risk model (scipy), MLflow, Azure Container Apps,
@@ -360,13 +362,14 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 
 ## Active Sprint — Phase 5: Productionisation
 
-> **Status as of 2026-05-16:**
+> **Status as of 2026-05-21:**
 > - Phase 0 (Bootstrap) ✅ complete
 > - Phase 1 (Risk Surface MVP) ✅ complete
 > - Phase 2 (Frontend MVP) ✅ complete
 > - Phase 3 (MLOps Foundation) ✅ complete
 > - Phase 4 (LightGBM) ✅ complete — pipeline built; enable with USE_LIGHTGBM=True after running train_lightgbm.py
 > - Phase 5 (Productionisation) ✅ complete
+> - Phase 6 (Retrieval + UX Polish) ✅ complete — Qdrant hybrid search, per-category heatmaps, Mappls geocoding, A/B pins
 
 ### Current Task
 
@@ -580,6 +583,33 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 
 ---
 
+## Phase 6 Plan — Retrieval + UX Polish
+
+> Goal: surface real crime evidence on the map and make geocoding reliable for Indian addresses.
+
+**P6-1: Qdrant hybrid search (nearby incidents)**
+- Build `retrieval/` module: dense embeddings (bge-small-en-v1.5, 384-dim) + BM25 sparse vectors, RRF fusion (k=60)
+- Index all 8,797 crime records from Cosmos snapshot into Qdrant (`scripts/build_index.py`)
+- `backend/app/services/retrieval_service.py` — wraps search with graceful degradation (returns `[]` when Qdrant is down, no crash)
+- `GET /routes/recommend` response extended with `nearby_incidents` per route: crime type, summary, lat/lng, source URL
+- Frontend `MapView.jsx` — render incidents as coloured dots on selected route; click → popup with summary + source link
+- Docker Compose: add `qdrant` service so local dev is one command
+
+**P6-2: Per-category heatmaps**
+- `ml/generate_heatmap.py` — score one KDE grid per crime category (unweighted single-category mode) + weighted "all" blend
+- Distinct RGBA colour stops per category so users can immediately tell which category is active
+- `GET /risk/heatmap-image?category=<slug>` endpoint with fallback to `heatmap.png`
+- Frontend: category pills (All / Sex. Violence / Robbery / Assault / Kidnapping / Murder / Theft); legend updates to match; toggle hides overlay entirely
+
+**P6-3: Geocoding overhaul + A/B pins**
+- Replace ORS Pelias (weakest India coverage) with Mappls (MapMyIndia) primary + Nominatim (OSM) fallback
+- `GET /geocode?q=<address>` debug endpoint
+- Frontend: "Show locations on map" button geocodes origin + destination and places A/B pins
+- Auto-pin from route geometry when routes arrive (no button click needed)
+- `MAPPLS_API_KEY` added to config; key sourced from MapMyIndia developer console (250 req/day free tier)
+
+---
+
 ## Tech Stack Summary
 
 ### Backend (`backend/requirements.txt`)
@@ -715,6 +745,40 @@ LOG_FORMAT=console   # "console" locally; "json" in Azure Container Apps
 ## Sprint Completed Log
 
 > Move tasks here when fully implemented + tested + deployed.
+
+### P6-3 — Bug fixes: Qdrant resilience, heatmap correctness, pkg_resources (2026-05-21)
+
+- `backend/app/services/retrieval_service.py` — `QdrantClient(..., timeout=5)`: caps Qdrant I/O at 5 s instead of the default 60 s. Prevents a stopped Qdrant container from blocking the entire event loop for a full minute.
+- `backend/app/routers/routes.py` — `get_route_incidents` call wrapped in `await asyncio.to_thread(...)`: moves the blocking synchronous Qdrant call off the FastAPI event loop so other requests can be served while retrieval waits.
+- `frontend/src/components/MapView.jsx` — `_applyHeatmap()` helper: replaces `source.updateImage()` (fire-and-forget, no completion callback) with full remove-and-re-add of the MapLibre source and layer. Category pills and legend are now always in sync with the visible raster. `beforeId` set to the first symbol layer so the heatmap sits under road labels/icons instead of smearing over them. `HEATMAP_OPACITY` lowered (`0.60/0.40/0.18` at zoom 8/13/15) to reduce visual dominance.
+- `ml/.venv/.../mlflow/utils/requirements_utils.py` — patched third-party file: removed `import pkg_resources` (setuptools, deprecated); replaced `import importlib_metadata` (backport) with `import importlib.metadata as importlib_metadata` (stdlib, Python 3.8+). Rewrote `_get_requires()` to use `importlib_metadata.requires()` + `packaging.requirements.Requirement` for marker-aware extras filtering. Fixes backend 404 errors caused by `pkg_resources` being absent from `backend/.venv`.
+
+### P6-2 — Per-category heatmaps + MapView category pills (2026-05-21)
+
+- `ml/generate_heatmap.py` — `generate_all_images()`: scores one KDE grid per crime category (unweighted, single-category mode) plus the weighted "all" blend. Distinct RGBA colour stops per category (`CATEGORY_CMAPS`). Outputs `heatmap_all.png`, `heatmap_sexual_violence.png`, `heatmap_robbery.png`, `heatmap_assault.png`, `heatmap_kidnapping.png`, `heatmap_murder.png`, `heatmap_theft_burglary.png`, and `heatmap.png` (backward-compat alias). All files land in `ml/artifacts/`.
+- `backend/app/routers/risk.py` — `GET /risk/heatmap-image?category=<slug>`: validates against `VALID_CATEGORIES`, resolves `heatmap_{category}.png`, falls back to `heatmap.png` if category-specific file absent. `Cache-Control: public, max-age=3600` header prevents redundant fetches.
+- `frontend/src/components/MapView.jsx` — `CATEGORIES` array with 7 pills (All + 6 crime types), each with a distinct color and legend gradient. `activeCategory` state drives `_applyHeatmap()`. Category pills visible only when heatmap toggle is on. Legend label and gradient update to match active category.
+
+**To regenerate category PNGs:** `python -m ml.generate_heatmap` — takes ~2 min on CPU. Re-run after each weekly model retrain.
+
+### P6-1 — Retrieval pipeline: Qdrant hybrid search + geocoding overhaul + A/B pins (2026-05-21)
+
+**Qdrant hybrid search (nearby incidents)**
+- `retrieval/search.py` — fixed `NamedSparseVector` bug: sparse query must use `NamedSparseVector(name="sparse", vector=...)`, not a tuple. Dense (bge-small-en-v1.5, 384-dim) + BM25 sparse with RRF fusion (k=60). Geo pre-filter (bounding box) applied before vector search.
+- `backend/app/schemas/routes.py` — `IncidentResult.crime_macro: Optional[str] = None`: some Qdrant payloads have null crime_macro; non-optional field caused 422 validation errors on every retrieval hit.
+- `backend/app/services/retrieval_service.py` — new file: wraps `retrieval/search.py` for the backend serving path. Graceful degradation — if `QDRANT_HOST` unset or Qdrant unreachable at startup, all calls return `[]` silently. `init()` called once from FastAPI lifespan. `get_route_incidents()` samples waypoints every 500 m (not 100 m) to reduce Qdrant call volume ~4×. Deduplicates results by URL.
+- `backend/app/main.py` — calls `retrieval_service.init()` in lifespan startup.
+
+**Geocoding overhaul**
+- `backend/app/services/geocoding.py` — full rewrite. Mappls (MapMyIndia) as primary geocoder (`GET /advancedmaps/v2/geocode`, 250 req/day free tier, best India coverage). Nominatim (OSM) as fallback (`User-Agent` required; `countrycodes=in` + `viewbox` + `bounded=1` for Delhi). ORS Pelias removed. Both wrapped in 24 h TTL cache.
+- `backend/app/routers/geocode.py` — new `GET /geocode?q=<address>` debug endpoint: returns `{lat, lng, query}` for any address string. Used by frontend "Show locations on map" button.
+- `backend/app/main.py` — registered `geocode_router`.
+- `backend/app/config.py` — added `MAPPLS_API_KEY: str = ""`.
+- `.env.example` — documented `MAPPLS_API_KEY`.
+
+**A/B pins on map**
+- `frontend/src/components/RouteForm.jsx` — "Show locations on map" button: geocodes origin + destination via `GET /geocode`, calls `onPinLocations` prop with `{origin: {lat,lng}, destination: {lat,lng}}`.
+- `frontend/src/App.jsx` — `useEffect` on `routes`: when routes arrive, extracts first and last GeoJSON coordinate (`[lng, lat]` → reversed) and calls `setPinLocations` automatically. Pins appear on map without user having to click the pin button.
 
 ### P5-5 — Backend CI workflow (2026-05-16)
 - `backend/tests/conftest.py` — sets dummy env vars at module level (before any `Settings()` import fires), provides `fake_kde` (MagicMock returning `np.ones`) and `fake_model_dict` fixtures

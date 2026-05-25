@@ -1,5 +1,6 @@
 # backend/app/routers/routes.py
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -9,7 +10,7 @@ from prometheus_client import Counter
 from app.config import Settings
 from app.utils.cache import TTLCache
 from app.utils.limiter import limiter
-from app.schemas.routes import RouteRequest, RouteResponse, RouteOption
+from app.schemas.routes import RouteRequest, RouteResponse, RouteOption, PersonalisedRequest
 from app.services import geocoding, routing
 from app.services.risk_model import score_route
 from app.services import retrieval_service
@@ -136,7 +137,8 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
             # WHY after scoring loop: KDE + Qdrant latencies don't compound —
             # we score all routes first, then fetch incidents for each.
             # If Qdrant is unavailable, get_route_incidents returns [] silently.
-            raw_incidents = retrieval_service.get_route_incidents(
+            raw_incidents = await asyncio.to_thread(
+                retrieval_service.get_route_incidents,
                 waypoints=route["waypoints"],
                 radius_km=2.0,
                 top_k_per_point=3,
@@ -152,6 +154,8 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
                     summary=i.get("summary", ""),
                     url=i.get("url", ""),
                     location_exact=i.get("location_exact"),
+                    victim=i.get("victim"),
+                    weapon_used=i.get("weapon_used"),
                     rrf_score=i.get("rrf_score", 0.0),
                 )
                 for i in raw_incidents
@@ -181,3 +185,34 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
             status_code=502,
             detail="Route service temporarily unavailable",
         ) from exc
+
+
+@router.post("/incidents/personalised", response_model=list[IncidentResult])
+@limiter.limit("60/minute")
+async def personalised_incidents(
+    request: Request,
+    req: PersonalisedRequest,
+) -> list[IncidentResult]:
+    raw = await asyncio.to_thread(
+        retrieval_service.get_personalised_incidents,
+        situation_text=req.situation,
+        waypoints=req.waypoints,
+        radius_km=req.radius_km,
+        max_total=req.max_total,
+    )
+    return [
+        IncidentResult(
+            crime_macro=i.get("crime_macro", "Unknown"),
+            crime_type=i.get("crime_type"),
+            lat=i.get("lat"),
+            lng=i.get("lng"),
+            crime_date=i.get("crime_date") or None,
+            summary=i.get("summary", ""),
+            url=i.get("url", ""),
+            location_exact=i.get("location_exact"),
+            victim=i.get("victim"),
+            weapon_used=i.get("weapon_used"),
+            rrf_score=i.get("rrf_score", 0.0),
+        )
+        for i in raw
+    ]

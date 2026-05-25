@@ -33,9 +33,18 @@ class IncidentResult(BaseModel):
     summary:        str
     url:            str
     location_exact: Optional[str] = None
+    victim:         Optional[str] = None
+    weapon_used:    Optional[str] = None
     # WHY rrf_score exposed: useful for frontend to sort/filter if needed,
     # and helps during debugging to see why an incident ranked where it did.
     rrf_score:      float = 0.0
+
+
+class PersonalisedRequest(BaseModel):
+    situation: str
+    waypoints: list[tuple[float, float]]
+    radius_km: float = 2.0
+    max_total: int = 8
 
 
 class RouteOption(BaseModel):

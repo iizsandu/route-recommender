@@ -7,9 +7,10 @@ import RouteResults from './components/RouteResults'
 import MapView from './components/MapView'
 
 export default function App() {
-  const [disclaimerOpen, setDisclaimerOpen] = useState(!hasAcknowledged())
-  const [selectedIdx, setSelectedIdx]       = useState(0)
-  const [pinLocations, setPinLocations]     = useState(null)
+  const [disclaimerOpen, setDisclaimerOpen]         = useState(!hasAcknowledged())
+  const [selectedIdx, setSelectedIdx]               = useState(0)
+  const [pinLocations, setPinLocations]             = useState(null)
+  const [personalisedIncidents, setPersonalisedIncidents] = useState(null)
 
   const { routes, loading, error, recommend } = useRouteRecommend()
 
@@ -28,6 +29,7 @@ export default function App() {
 
   async function handleFormSubmit(params) {
     setSelectedIdx(0)
+    setPersonalisedIncidents(null)
     await recommend(params)
   }
 
@@ -62,6 +64,8 @@ export default function App() {
             routes={routes}
             selectedIdx={selectedIdx}
             onSelect={setSelectedIdx}
+            personalisedIncidents={personalisedIncidents}
+            onPersonalisedIncidents={setPersonalisedIncidents}
           />
         </aside>
 
@@ -72,6 +76,7 @@ export default function App() {
             selectedIdx={selectedIdx}
             onSelectRoute={setSelectedIdx}
             pinLocations={pinLocations}
+            personalisedIncidents={personalisedIncidents}
           />
         </main>
       </div>

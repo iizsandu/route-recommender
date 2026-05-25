@@ -7,6 +7,7 @@ import logging
 import sys
 import tempfile
 import threading
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,16 @@ import mlflow.artifacts
 import numpy as np
 from mlflow.tracking import MlflowClient
 from prometheus_client import Histogram
+
+# WHY filter: get_latest_versions() is deprecated in MLflow 2.9+ in favour of
+# search_model_versions(). The replacement requires a filter-string API change
+# that would be a larger refactor; suppress the noise until that migration happens.
+warnings.filterwarnings(
+    "ignore",
+    message=".*get_latest_versions.*",
+    category=FutureWarning,
+    module="mlflow",
+)
 
 # WHY sys.path insert: ml.kde_model lives at repo root (d:\route_recommender_web\ml\).
 # When uvicorn is started from backend/, the repo root is not on sys.path, so
@@ -268,9 +279,16 @@ def reload_from_registry() -> bool:
             _REGISTRY_MODEL_NAME, stages=["Production"]
         )
     except Exception as exc:
-        # WHY warn not raise: a failed registry check must not crash the
-        # backend. Existing model keeps serving; next check will retry.
-        logger.warning("registry check failed, keeping current model: %s", exc)
+        # WHY split log levels: "not found" means promote_model.py hasn't been
+        # run yet — expected in dev, not an operational failure. Any other
+        # exception (network error, auth failure) is a real WARNING.
+        if "not found" in str(exc).lower():
+            logger.debug(
+                "MLflow registry model %r not yet registered — skipping reload",
+                _REGISTRY_MODEL_NAME,
+            )
+        else:
+            logger.warning("registry check failed, keeping current model: %s", exc)
         return False
 
     if not versions:

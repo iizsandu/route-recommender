@@ -55,7 +55,7 @@ def init(qdrant_host: str, qdrant_port: int, bm25_model_path: Path) -> bool:
     # Connect to Qdrant
     try:
         from qdrant_client import QdrantClient
-        _client = QdrantClient(host=qdrant_host, port=qdrant_port)
+        _client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=5)
         _client.get_collections()  # cheap health check
         logger.info("Qdrant connected at %s:%d", qdrant_host, qdrant_port)
     except Exception as exc:
@@ -97,10 +97,12 @@ def get_nearby_incidents(
     lng: float,
     radius_km: float = 2.0,
     top_k: int = 5,
+    allowed_crime_types: list[str] | None = None,
 ) -> list[dict]:
     """
     Return the top_k historically reported incidents within radius_km of (lat, lng).
-    Returns [] if retrieval service is not ready.
+    If allowed_crime_types is provided, only incidents matching those crime_macro
+    values are returned. Returns [] if retrieval service is not ready.
     """
     if not _ready:
         return []
@@ -115,10 +117,26 @@ def get_nearby_incidents(
             lng=lng,
             radius_km=radius_km,
             top_k=top_k,
+            allowed_crime_types=allowed_crime_types,
         )
     except Exception:
         logger.exception("Qdrant search failed for (%.4f, %.4f)", lat, lng)
         return []
+
+
+# Female-safety-relevant crime categories for route incident filtering.
+# WHY these five: they represent crimes with direct physical threat to the
+# target user (female commuter). Fraud, drug possession, and terrorism/riot
+# are excluded — they don't inform safe routing decisions at the street level.
+# Strings must exactly match map_crime_macro() return values in
+# ml/data/category_mapping.py (verified: all five are in MACRO_PRIORITY).
+_FEMALE_SAFETY_CATEGORIES = [
+    "Sexual Violence",
+    "Robbery",
+    "Assault",
+    "Kidnapping",
+    "Murder",
+]
 
 
 def get_route_incidents(
@@ -129,8 +147,9 @@ def get_route_incidents(
 ) -> list[dict]:
     """
     Sample waypoints along a route and retrieve nearby incidents.
-    Deduplicates by URL so the same news article doesn't appear twice.
-    Returns at most max_total incidents across the whole route.
+    Only female-safety-relevant crime categories are returned (see
+    _FEMALE_SAFETY_CATEGORIES). Deduplicates by URL so the same news
+    article doesn't appear twice. Returns at most max_total incidents.
     """
     if not _ready or not waypoints:
         return []
@@ -146,7 +165,12 @@ def get_route_incidents(
     for lat, lng in sampled:
         if len(results) >= max_total:
             break
-        hits = get_nearby_incidents(lat, lng, radius_km, top_k_per_point)
+        hits = get_nearby_incidents(
+            lat, lng,
+            radius_km=radius_km,
+            top_k=top_k_per_point,
+            allowed_crime_types=_FEMALE_SAFETY_CATEGORIES,
+        )
         for hit in hits:
             url = hit.get("url", "")
             if url not in seen_urls:
@@ -156,6 +180,55 @@ def get_route_incidents(
                     break
 
     return results
+
+
+def get_personalised_incidents(
+    situation_text: str,
+    waypoints: list[tuple[float, float]],
+    radius_km: float = 2.0,
+    max_total: int = 8,
+) -> list[dict]:
+    """
+    Retrieve incidents relevant to a specific situation description along a route.
+    Unlike get_route_incidents(), uses situation_text as the embedding query instead
+    of the fixed safety query — so results are ranked by semantic match to the
+    user's described context.
+    Deduplicates by URL, collects across all sampled waypoints, then sorts by
+    rrf_score descending before truncating to max_total.
+    """
+    if not _ready or not waypoints:
+        return []
+
+    sampled = _sample_waypoints(waypoints, _SAMPLE_INTERVAL_M)
+
+    seen_urls: set[str] = set()
+    results: list[dict] = []
+
+    for lat, lng in sampled:
+        try:
+            from retrieval.search import hybrid_search
+            hits = hybrid_search(
+                client=_client,
+                embed_model=_embed_model,
+                bm25=_bm25,
+                query_text=situation_text,
+                lat=lat,
+                lng=lng,
+                radius_km=radius_km,
+                top_k=5,
+                allowed_crime_types=_FEMALE_SAFETY_CATEGORIES,
+            )
+        except Exception:
+            logger.exception("personalised search failed for (%.4f, %.4f)", lat, lng)
+            continue
+        for hit in hits:
+            url = hit.get("url", "")
+            if url not in seen_urls:
+                seen_urls.add(url)
+                results.append(hit)
+
+    results.sort(key=lambda h: h.get("rrf_score", 0.0), reverse=True)
+    return results[:max_total]
 
 
 def _sample_waypoints(

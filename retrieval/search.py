@@ -5,7 +5,7 @@ import logging
 from typing import Optional
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, GeoBoundingBox, GeoPoint, NamedSparseVector
+from qdrant_client.models import Filter, FieldCondition, GeoBoundingBox, GeoPoint, MatchAny, NamedSparseVector
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
@@ -52,6 +52,7 @@ def hybrid_search(
     radius_km: float = 2.0,
     top_k: int = 10,
     collection_name: str = "delhi_crimes",
+    allowed_crime_types: list[str] | None = None,
 ) -> list[dict]:
     """
     Hybrid search combining dense (semantic) + sparse (BM25) vectors via RRF fusion.
@@ -59,11 +60,28 @@ def hybrid_search(
     If lat/lng are provided, a geo bounding-box filter is applied before both
     dense and sparse searches — this is Feature A (route evidence retrieval).
     If lat/lng are None, the search is text-only — this is Feature D (semantic search).
+    If allowed_crime_types is provided, a MatchAny filter on crime_macro is added
+    alongside the geo filter — only incidents of those categories are returned.
 
     Returns a list of dicts (top_k results), each containing all payload fields
     plus rrf_score and match_type ("dense", "sparse", or "both").
     """
-    geo_filter = _build_geo_filter(lat, lng, radius_km) if lat is not None else None
+    if lat is not None:
+        geo_filter = _build_geo_filter(lat, lng, radius_km)
+        if allowed_crime_types:
+            # Append category filter to the geo filter's must clause.
+            # WHY reconstruct rather than mutate: Filter is a Pydantic model;
+            # list concatenation avoids in-place mutation side-effects.
+            geo_filter = Filter(
+                must=list(geo_filter.must) + [
+                    FieldCondition(
+                        key="crime_macro",
+                        match=MatchAny(any=allowed_crime_types),
+                    )
+                ]
+            )
+    else:
+        geo_filter = None
 
     # WHY: fetch top_k * 2 from each list before fusing — RRF needs enough candidates
     # from both sides so the fusion has room to re-rank correctly

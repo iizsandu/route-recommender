@@ -95,6 +95,13 @@ async def get_routes(
                 },
             },
         )
+        if resp.status_code == 404:
+            # WHY custom message: ORS returns "coordinate 0: 77.24 28.65" which is
+            # meaningless to end users. Translate to actionable guidance.
+            raise ValueError(
+                "One or more locations could not be matched to a drivable road. "
+                "Try entering a nearby street name or landmark instead."
+            )
         resp.raise_for_status()
 
     routes = []

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
+
+# WHY: repo root must be in sys.path so ml.data.category_mapping resolves
+# regardless of how this module is invoked (via build_index.py, directly,
+# or imported from a test). Same defensive pattern as retrieval_service.py.
+_REPO_ROOT = Path(__file__).resolve().parents[1]  # retrieval/pipeline.py → repo root
+sys.path.insert(0, str(_REPO_ROOT))
+
+from ml.data.category_mapping import map_crime_macro
 
 from pymongo import MongoClient
 from tqdm import tqdm
@@ -92,20 +101,39 @@ def run(
     for r, summary in zip(records, summaries):
         r["summary"] = summary
 
-    # Step 4: Embed summaries
-    logger.info("Encoding %d summaries with bge-small...", len(summaries))
-    dense_vectors = embed.encode(summaries)  # shape (N, 384)
+    # Build augmented embedding text per record.
+    # WHY augment: the distilbart summary alone loses all structured signal
+    # (crime category, exact location, victim identity, weapon). Including
+    # crime_type + location_exact + victim + weapon_used makes both dense
+    # similarity and BM25 keyword search category- and geo-aware.
+    aug_texts = []
+    for r in records:
+        parts = []
+        if r.get("crime_type"):
+            parts.append(str(r["crime_type"]))
+        if r.get("location_exact"):
+            parts.append(str(r["location_exact"]))
+        if r.get("victim"):
+            parts.append(str(r["victim"]))
+        if r.get("weapon_used"):
+            parts.append(str(r["weapon_used"]))
+        parts.append(r["summary"])
+        aug_texts.append(". ".join(parts))
 
-    # Step 5: Fit BM25 on all summaries, compute per-doc sparse vectors
+    # Step 4: Embed augmented texts (not raw summaries)
+    logger.info("Encoding %d augmented texts with bge-small...", len(aug_texts))
+    dense_vectors = embed.encode(aug_texts)  # shape (N, 384)
+
+    # Step 5: Fit BM25 on augmented texts, compute per-doc sparse vectors
     logger.info("Fitting BM25 on corpus...")
-    bm25 = bm25_index.fit(summaries)
+    bm25 = bm25_index.fit(aug_texts)
     bm25_index.save(bm25, BM25_MODEL_PATH)
     logger.info("BM25 model saved to %s", BM25_MODEL_PATH)
 
-    tokenized_summaries = [bm25_index._tokenize(s) for s in summaries]
+    tokenized_texts = [bm25_index._tokenize(t) for t in aug_texts]
     sparse_vectors = [
         corpus_sparse_vector(bm25, tokens)
-        for tokens in tqdm(tokenized_summaries, desc="BM25 sparse vectors")
+        for tokens in tqdm(tokenized_texts, desc="BM25 sparse vectors")
     ]
 
     if dry_run:
@@ -122,7 +150,7 @@ def run(
     ):
         coords = record.get("coordinates") or {}
         payload = {
-            "crime_macro": record.get("crime_macro"),
+            "crime_macro": map_crime_macro(record.get("crime_type")),
             "crime_type": record.get("crime_type"),
             "lat": coords.get("lat"),
             "lng": coords.get("lng"),
@@ -132,6 +160,8 @@ def run(
             "summary": record["summary"],
             "location_exact": record.get("location_exact"),
             "severity_score": record.get("severity_score"),
+            "victim": record.get("victim"),
+            "weapon_used": record.get("weapon_used"),
         }
         points.append(
             PointStruct(
