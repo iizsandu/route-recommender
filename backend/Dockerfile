@@ -11,7 +11,7 @@ COPY backend/requirements.txt .
 # WHY cpu wheel first: sentence-transformers depends on torch. Installing the CPU-only
 # wheel here (~200 MB) prevents pip from pulling the default GPU wheel (~800 MB) when
 # it resolves sentence-transformers' dependencies from requirements.txt.
-RUN pip install --no-cache-dir torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app/ ./app/
