@@ -24,12 +24,16 @@ if __name__ == "__main__":
     parser.add_argument("--mongo-uri", default="mongodb://localhost:27017/")
     parser.add_argument("--qdrant-host", default="localhost")
     parser.add_argument("--qdrant-port", type=int, default=6333)
+    parser.add_argument("--qdrant-url", default="", help="Qdrant Cloud URL (overrides --qdrant-host/port)")
+    parser.add_argument("--qdrant-api-key", default="", help="Qdrant Cloud API key")
     args = parser.parse_args()
 
     run(
         mongo_uri=args.mongo_uri,
         qdrant_host=args.qdrant_host,
         qdrant_port=args.qdrant_port,
+        qdrant_url=args.qdrant_url,
+        qdrant_api_key=args.qdrant_api_key,
         rebuild=args.rebuild,
         dry_run=args.dry_run,
         limit=args.limit,

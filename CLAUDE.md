@@ -40,15 +40,18 @@ for routing.
 - Reviews, user-generated content
 - Multi-modal routing (metro + walk, etc.)
 
-**Current state:** Fully functional app. Routes, risk heatmap (per-category
-KDE PNGs), nearby incidents (Qdrant hybrid search + BM25), and A/B map pins
-all working end-to-end. 8,797 crime records ingested from Cosmos DB; 4,655
-in KDE pool across 8 categories. Geocoding uses Mappls primary + Nominatim
-fallback (ORS Pelias removed). All Phase 0–6 work complete.
+**Current state:** Fully functional app deployed to production. Routes, risk
+heatmap (per-category KDE PNGs), nearby incidents (Qdrant hybrid search +
+BM25), personalised incidents (semantic questionnaire → situation-aware
+retrieval), and A/B map pins all working end-to-end. 8,797 crime records
+ingested from Cosmos DB; 4,655 in KDE pool across 8 categories; 6,775
+indexed in Qdrant Cloud. Geocoding uses Mappls primary + Nominatim fallback
+(ORS Pelias removed). All Phase 0–6 work complete. Production fully
+operational on Azure Container Apps + Vercel.
 
 **Tech Stack:** Python 3.11+, FastAPI, React 18 + Vite, MapLibre GL JS,
 OpenRouteService API, KDE risk model (scipy), MLflow, Azure Container Apps,
-Vercel, Azure Cosmos DB (read-only).
+Vercel, Azure Cosmos DB (read-only), Qdrant Cloud (free tier, vector search).
 
 **Budget:** ₹500/month additional (on top of the existing ₹2,000 sister-repo
 budget). Projected actual cost: ₹0–200/month using free tiers throughout.
@@ -63,12 +66,11 @@ route_recommender_web/
 ├── CLAUDE.md                       # This file — source of truth for all sessions
 ├── .gitignore
 ├── .env.example                    # All env vars documented, no secrets
-├── docker-compose.yml              # Local dev convenience: backend + frontend
+├── docker-compose.yml              # Local dev convenience: backend + frontend + qdrant
 │
 ├── backend/                        # FastAPI service (port 8000)
-│   ├── Dockerfile
+│   ├── Dockerfile                  # Builds with CPU torch + retrieval module baked in
 │   ├── requirements.txt
-│   ├── pyproject.toml
 │   ├── app/
 │   │   ├── __init__.py
 │   │   ├── main.py                 # App entrypoint, CORS, lifespan, GET /health
@@ -76,26 +78,29 @@ route_recommender_web/
 │   │   ├── routers/
 │   │   │   ├── __init__.py
 │   │   │   ├── routes.py           # POST /routes/recommend
-│   │   │   └── risk.py             # GET /risk/cell, GET /risk/heatmap [NOT YET BUILT]
+│   │   │   ├── risk.py             # GET /risk/heatmap, GET /risk/heatmap-image
+│   │   │   ├── geocode.py          # GET /geocode?q=<address> (debug endpoint)
+│   │   │   └── search.py           # POST /routes/incidents/personalised
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── cosmos_client.py    # Async read-only Cosmos client
 │   │   │   ├── routing.py          # OpenRouteService wrapper + caching
-│   │   │   ├── geocoding.py        # Address → lat/lng (ORS Pelias)
+│   │   │   ├── geocoding.py        # Mappls primary + Nominatim fallback
+│   │   │   ├── retrieval_service.py# Qdrant hybrid search wrapper; graceful degradation
 │   │   │   └── risk_model.py       # KDE loader, score_points_batch, score_route
 │   │   ├── schemas/
 │   │   │   ├── __init__.py
-│   │   │   ├── routes.py           # RouteRequest, RouteResponse, RouteOption
-│   │   │   └── risk.py             # RiskQuery, RiskResponse [NOT YET BUILT]
+│   │   │   └── routes.py           # RouteRequest, RouteResponse, RouteOption, IncidentResult
 │   │   └── utils/
 │   │       ├── __init__.py
 │   │       ├── logger.py           # structlog JSON/console
-│   │       └── cache.py            # In-memory TTL cache for routes/geocoding
+│   │       ├── cache.py            # In-memory TTL cache for routes/geocoding
+│   │       └── limiter.py          # slowapi Limiter singleton (60 req/min per IP)
 │   └── tests/
-│       ├── test_cosmos.py          # 7 tests — Cosmos client (passing)
-│       ├── test_risk_model.py      # [NOT YET BUILT]
-│       ├── test_routing.py         # [NOT YET BUILT]
-│       └── conftest.py             # [NOT YET BUILT]
+│       ├── test_cosmos.py          # 7 tests — Cosmos client
+│       ├── test_risk_model.py      # 3 tests — KDE scoring + time modifier
+│       ├── test_routing.py         # 10 tests — waypoint sampling, TTLCache, ORS parsing
+│       └── conftest.py             # dummy env vars, fake_kde fixture
 │
 ├── frontend/                       # React 18 SPA (port 3000 dev, deployed to Vercel)
 │   ├── Dockerfile
@@ -103,16 +108,16 @@ route_recommender_web/
 │   ├── vite.config.js
 │   ├── index.html
 │   ├── src/
-│   │   ├── main.jsx
-│   │   ├── App.jsx
+│   │   ├── main.jsx                # Sentry.init() when VITE_SENTRY_DSN set
+│   │   ├── App.jsx                 # Layout, pinLocations state, personalisedIncidents state
 │   │   ├── api/
-│   │   │   └── client.js           # Axios wrapper, base URL from env
+│   │   │   └── client.js           # Axios wrapper + getPersonalisedIncidents()
 │   │   ├── components/
-│   │   │   ├── MapView.jsx         # MapLibre GL map, displays routes + heatmap
-│   │   │   ├── RouteForm.jsx       # Origin/destination input
-│   │   │   ├── RouteResults.jsx    # Ranked routes with Low/Med/High bands
+│   │   │   ├── MapView.jsx         # Routes, heatmap, general + personalised incident dots
+│   │   │   ├── RouteForm.jsx       # Address inputs + "Show locations on map" pin button
+│   │   │   ├── RouteResults.jsx    # Ranked routes, incident cards, personalise questionnaire
 │   │   │   ├── DisclaimerModal.jsx # First-visit disclaimer
-│   │   │   └── TimeOfDayPicker.jsx # When are you travelling?
+│   │   │   └── TimeOfDayPicker.jsx # 4 presets + custom time
 │   │   ├── hooks/
 │   │   │   └── useRouteRecommend.js
 │   │   └── styles/
@@ -120,19 +125,32 @@ route_recommender_web/
 │   └── public/
 │       └── favicon.ico
 │
+├── retrieval/                      # Offline index-build + online hybrid search
+│   ├── __init__.py
+│   ├── pipeline.py                 # End-to-end: MongoDB → summarise → embed → BM25 → Qdrant
+│   ├── qdrant_store.py             # Collection create/upsert; get_client() for local + cloud
+│   ├── search.py                   # hybrid_search(): dense + BM25 sparse + RRF fusion
+│   ├── embed.py                    # bge-small-en-v1.5 encoder wrapper
+│   ├── bm25_index.py               # BM25Okapi fit/save/load + sparse vector helpers
+│   ├── summarise.py                # distilbart-cnn-6-6 summariser (index-build only)
+│   ├── requirements.txt            # Heavy deps (torch, transformers, pymongo) — index-build only
+│   └── bm25_model.pkl              # Fitted BM25 model (gitignored; baked into Docker image)
+│
 ├── ml/                             # ML training and MLOps
 │   ├── requirements.txt
 │   ├── kde_model.py                # FixedBandwidthKDE subclass — stable pickle path
 │   ├── train_kde.py                # Build per-category KDE models from snapshot
-│   ├── train_lightgbm.py           # Phase 4 — LightGBM risk classifier
+│   ├── train_lightgbm.py           # LightGBM risk classifier (USE_LIGHTGBM=True to enable)
 │   ├── evaluate.py                 # Time-based holdout, PR-AUC, recall@10%
 │   ├── promote_model.py            # Champion/challenger gate logic
+│   ├── generate_heatmap.py         # Score KDE grid → PNG per category + "all" blend
 │   ├── data/
 │   │   ├── category_mapping.py     # crime_type → macro regex map (80+ patterns)
 │   │   ├── ingest.py               # Cosmos → DataFrame → Parquet snapshot
-│   │   └── validate.py             # Great Expectations data quality
+│   │   ├── validate.py             # Great Expectations data quality
+│   │   └── h3_cells.py             # H3 res-7 cell features for LightGBM
 │   ├── notebooks/                  # Exploratory only, not part of pipeline
-│   └── artifacts/                  # MLflow + pickled models output here
+│   └── artifacts/                  # MLflow + pickled models (gitignored, baked into Docker)
 │       ├── kde_assault.pkl
 │       ├── kde_drug_trafficking.pkl
 │       ├── kde_kidnapping.pkl
@@ -140,7 +158,23 @@ route_recommender_web/
 │       ├── kde_robbery.pkl
 │       ├── kde_sexual_violence.pkl
 │       ├── kde_terrorism_riot.pkl
-│       └── kde_theft_burglary.pkl
+│       ├── kde_theft_burglary.pkl
+│       ├── lgb_global.pkl          # LightGBM global model
+│       ├── lgb_assault.pkl
+│       ├── lgb_robbery.pkl
+│       ├── lgb_sexual_violence.pkl
+│       ├── heatmap.png             # Weighted "all" blend (backward-compat alias)
+│       ├── heatmap_all.png
+│       ├── heatmap_sexual_violence.png
+│       ├── heatmap_robbery.png
+│       ├── heatmap_assault.png
+│       ├── heatmap_kidnapping.png
+│       ├── heatmap_murder.png
+│       └── heatmap_theft_burglary.png
+│
+├── scripts/
+│   ├── build_index.py              # Build Qdrant index from MongoDB; supports --qdrant-url for cloud
+│   └── deploy.ps1                  # Local deploy: az containerapp update + health check
 │
 ├── infra/
 │   ├── azure/
@@ -151,10 +185,10 @@ route_recommender_web/
 │
 └── .github/
     └── workflows/
-        ├── backend-ci.yml          # Lint, test, build on PR [NOT YET BUILT]
-        ├── backend-deploy.yml      # Build + push to GHCR; manual deploy via scripts/deploy.ps1
+        ├── backend-ci.yml          # Lint (ruff) + pytest on push/PR to master (backend/**)
+        ├── backend-deploy.yml      # Build + push to GHCR (FAILS in CI — ml/artifacts gitignored)
         ├── frontend-ci.yml         # Lint, test, build on PR
-        └── retrain-weekly.yml      # Weekly cron: retrain KDE/LightGBM
+        └── retrain-weekly.yml      # Weekly cron: ingest → validate → train → promote → heatmap
 ```
 
 **Intentional deviations from original spec:**
@@ -162,6 +196,11 @@ route_recommender_web/
 - `backend/app/dependencies.py` — not needed; singletons initialised in lifespan and passed via module-level imports
 - `backend/app/services/route_scorer.py` — consolidated into `risk_model.py` (`score_route` lives there)
 - `ml/kde_model.py` + `ml/data/category_mapping.py` — added during EDA rebuild; not in original spec but now required by pipeline
+- `retrieval/` module — not in original spec; added in Phase 6 for Qdrant hybrid search
+- `backend/app/routers/search.py` — `POST /routes/incidents/personalised`; not in original spec; added for personalised incident retrieval
+- `backend/app/utils/limiter.py` — extracted from `main.py` to avoid circular imports between `main.py` and `routes.py`
+- `backend/app/schemas/risk.py` — never built; all schemas consolidated in `routes.py`
+- `backend-deploy.yml` CI workflow — does NOT deploy to Azure (student account blocks OIDC app registration); Docker image must be built locally and pushed manually via `scripts/deploy.ps1`
 
 **Files Claude Code should NOT create in v1 (out of scope):**
 - Auth-related files (login, signup, sessions)
@@ -257,6 +296,17 @@ feature request.
 Train on data up to 30 days ago, test on the last 30 days. Primary
 metric: PR-AUC and recall on top-10% riskiest grid points. Not F1,
 not accuracy — this is a rare-event problem.
+
+### 11. Qdrant Cloud (free tier) for vector search in production
+Azure Container Apps (Consumption plan) has no persistent disk. Running
+Qdrant as a sidecar container would lose the index on every cold start.
+The local Qdrant storage directory is ~877 MB — too large to bake into
+the Docker image alongside the KDE/LGB artifacts. Qdrant Cloud free tier
+(1 GB, no expiry, AWS sa-east-1) solves all three constraints: persistent,
+managed, zero image size impact. The backend connects via `QDRANT_URL` +
+`QDRANT_API_KEY`; falls back gracefully (returns `[]` incidents) if either
+is unset or unreachable. Local dev still uses `docker compose up qdrant` +
+`QDRANT_HOST=localhost`.
 
 ---
 
@@ -362,7 +412,7 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 
 ## Active Sprint — Phase 5: Productionisation
 
-> **Status as of 2026-05-21:**
+> **Status as of 2026-05-26:**
 > - Phase 0 (Bootstrap) ✅ complete
 > - Phase 1 (Risk Surface MVP) ✅ complete
 > - Phase 2 (Frontend MVP) ✅ complete
@@ -370,6 +420,7 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 > - Phase 4 (LightGBM) ✅ complete — pipeline built; enable with USE_LIGHTGBM=True after running train_lightgbm.py
 > - Phase 5 (Productionisation) ✅ complete
 > - Phase 6 (Retrieval + UX Polish) ✅ complete — Qdrant hybrid search, per-category heatmaps, Mappls geocoding, A/B pins
+> - Phase 7 (Personalised Incidents + Qdrant Cloud production) ✅ complete — questionnaire UI, situation-aware retrieval, dual-dot map rendering, Qdrant Cloud deployed
 
 ### Current Task
 
@@ -387,6 +438,20 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
   Setting it to a URL bypasses the proxy and triggers CORS preflight failures.
 - `frontend/.env` is separate from root `.env`. Vite only reads `frontend/.env`;
   the root `.env` is for the backend (uvicorn reads it via pydantic-settings).
+- **CI cannot build the Docker image.** `ml/artifacts/` and `retrieval/bm25_model.pkl`
+  are gitignored so GitHub Actions never has them. `backend-deploy.yml` will always
+  fail at the `COPY ml/artifacts/` Dockerfile step. The correct deploy workflow is:
+  1. `docker build -t ghcr.io/iizsandu/route-recommender-backend:latest -f backend/Dockerfile .`
+  2. `docker push ghcr.io/iizsandu/route-recommender-backend:latest`
+  3. `.\scripts\deploy.ps1`
+  Run from repo root so the build context includes `ml/artifacts/` and `retrieval/`.
+- **Qdrant local dev:** `docker compose up qdrant` starts Qdrant on port 6333. Set
+  `QDRANT_HOST=localhost` in root `.env`. Build index once with
+  `python scripts/build_index.py --rebuild`. Production uses Qdrant Cloud
+  (`QDRANT_URL` + `QDRANT_API_KEY` env vars on Azure).
+- **Re-index after model retrain:** if BM25 corpus changes (new crime records),
+  re-run `python scripts/build_index.py --rebuild --qdrant-url <URL> --qdrant-api-key <KEY>`
+  then rebuild and push the Docker image (bm25_model.pkl is baked in).
 
 ---
 
@@ -625,6 +690,18 @@ numpy==1.26.4
 structlog==24.1.0
 slowapi==0.1.9
 python-dateutil==2.8.2
+mlflow-skinny==2.11.0
+prometheus-fastapi-instrumentator==6.1.0
+prometheus-client>=0.19.0
+lightgbm==4.3.0
+h3==3.7.7
+pandas==2.2.0
+qdrant-client==1.9.1
+rank-bm25==0.2.2
+sentence-transformers==2.7.0   # serving-time; torch CPU wheel installed first in Dockerfile
+ruff==0.4.2
+pytest==8.1.1
+pytest-asyncio==0.23.6
 ```
 
 ### ML (`ml/requirements.txt`)
@@ -669,9 +746,12 @@ COSMOS_CONNECTION_STRING=AccountEndpoint=https://...
 COSMOS_DATABASE_NAME=route_recommender
 COSMOS_CONTAINER_NAME=structured_crimes
 
-# OpenRouteService
+# OpenRouteService (directions only — geocoding uses Mappls/Nominatim)
 ORS_API_KEY=eyJvcmc...
 ORS_BASE_URL=https://api.openrouteservice.org
+
+# Geocoding — Mappls (MapMyIndia) primary, Nominatim fallback
+MAPPLS_API_KEY=your_mappls_key_here    # 250 req/day free tier; empty = skip to Nominatim
 
 # MapTiler (public key — MapTiler enforces domain restriction, not secrecy)
 VITE_MAPTILER_KEY=your_key_here
@@ -681,6 +761,25 @@ KDE_ARTIFACTS_DIR=ml/artifacts          # path to dir with kde_*.pkl files
 BAND_LOW_THRESHOLD=0.0713               # city-wide p33 (Low/Medium boundary)
 BAND_HIGH_THRESHOLD=0.9142              # city-wide p66 (Medium/High boundary)
 # Recalibrate after each retrain; these are from the 2026-05-16 KDE inspection
+
+# LightGBM ensemble (optional — pure KDE used when USE_LIGHTGBM=False)
+USE_LIGHTGBM=False
+LGB_ARTIFACTS_DIR=ml/artifacts
+KDE_ENSEMBLE_WEIGHT=0.7
+LGB_ENSEMBLE_WEIGHT=0.3
+
+# Heatmap
+HEATMAP_PATH=ml/artifacts/heatmap.geojson
+HEATMAP_IMAGE_PATH=ml/artifacts/heatmap.png   # category PNGs live in same dir
+
+# Qdrant vector search
+# Local dev: set QDRANT_HOST=localhost (docker compose up qdrant)
+# Production: set QDRANT_URL + QDRANT_API_KEY (Qdrant Cloud free tier)
+QDRANT_HOST=                            # empty = retrieval disabled
+QDRANT_PORT=6333
+QDRANT_URL=                             # takes precedence over QDRANT_HOST when set
+QDRANT_API_KEY=                         # required when QDRANT_URL is set
+BM25_MODEL_PATH=retrieval/bm25_model.pkl
 
 # MLflow
 MLFLOW_TRACKING_URI=sqlite:///ml/artifacts/mlruns.db
@@ -693,6 +792,9 @@ ALLOWED_ORIGINS=http://localhost:3000,https://route-recommender-web.vercel.app
 # Logging
 LOG_LEVEL=INFO
 LOG_FORMAT=console   # "console" locally; "json" in Azure Container Apps
+
+# Frontend — Sentry error tracking (optional)
+VITE_SENTRY_DSN=                        # empty = Sentry disabled; set in Vercel env vars
 ```
 
 ---
@@ -745,6 +847,32 @@ LOG_FORMAT=console   # "console" locally; "json" in Azure Container Apps
 ## Sprint Completed Log
 
 > Move tasks here when fully implemented + tested + deployed.
+
+### Phase 7 — Personalised incidents + Qdrant Cloud production (2026-05-26)
+
+**Personalised incidents feature**
+- `frontend/src/api/client.js` — added `getPersonalisedIncidents(situation, waypoints, radiusKm, maxTotal)` named export alongside default axios instance. Posts to `POST /routes/incidents/personalised`.
+- `frontend/src/components/RouteResults.jsx` — questionnaire UI with 3 questions (travelling_with, transport_mode, destination_type); pill buttons; constructs situation sentence ("Woman travelling X by Y arriving at Z"); calls `getPersonalisedIncidents`; displays personalised incident cards with "Reset to general results" button. `personalisedIncidents` state lifted to `App.jsx` so MapView can also render it.
+- `frontend/src/App.jsx` — added `personalisedIncidents` state; passed as prop to both `RouteResults` and `MapView`; reset to `null` on new route search.
+- `frontend/src/components/MapView.jsx` — dual-dot rendering: general incident dots (18×18 SVG, category colour) and personalised dots (40×40 SVG with SVG SMIL pulse animation). Two separate popup state variables (`activeGeneralPopup`, `activePersonalisedPopup`). CSS `@keyframes` pulse replaced with SVG SMIL `<animate attributeName="r">` — CSS `transform:scale` clips inside MapLibre marker containers.
+- `backend/app/routers/search.py` — `POST /routes/incidents/personalised`: accepts `{situation, waypoints, radius_km, max_total}`, calls `retrieval_service.get_personalised_incidents()`.
+
+**Qdrant Cloud production setup**
+- `backend/app/config.py` — added `QDRANT_URL: str = ""` and `QDRANT_API_KEY: str = ""`. URL takes precedence over `QDRANT_HOST` when set.
+- `backend/app/services/retrieval_service.py` — `init()` now accepts `qdrant_url` and `qdrant_api_key`; uses `QdrantClient(url=..., api_key=...)` for cloud, falls back to `host:port` for local.
+- `backend/app/main.py` — passes `qdrant_url` and `qdrant_api_key` to `retrieval_service.init()`.
+- `retrieval/qdrant_store.py` — `get_client()` accepts optional `url` and `api_key`; returns cloud client when `url` is set.
+- `retrieval/pipeline.py` — `run()` accepts `qdrant_url` and `qdrant_api_key`; passed through to `get_client()`.
+- `scripts/build_index.py` — added `--qdrant-url` and `--qdrant-api-key` CLI args.
+- `backend/requirements.txt` — added `sentence-transformers==2.7.0`.
+- `backend/Dockerfile` — installs CPU-only torch wheel first (prevents 800 MB GPU build), copies `retrieval/` module + `bm25_model.pkl`, pre-downloads bge-small model into image layer.
+- **Indexed 6,775 records into Qdrant Cloud** (AWS sa-east-1 free tier) via `python scripts/build_index.py --rebuild --qdrant-url <URL> --qdrant-api-key <KEY>`.
+- **Root cause of earlier CI build failures:** `ml/artifacts/` is gitignored — GitHub Actions runner never has the `.pkl` files so `COPY ml/artifacts/` always fails. Docker image must be built locally (where artifacts exist) and pushed manually.
+
+**Production debugging lessons**
+- `ORS_API_KEY` on Azure was set to `"placeholder"` → 403 on all route requests. Fixed via `az containerapp update --set-env-vars`.
+- Running container called ORS geocoding despite committed code using Mappls: the deployed image was built from a May 12 commit (last successful CI build), predating the Mappls rewrite. Fixed by local Docker build + push.
+- Log streaming (`az containerapp logs show`) fails with "network error" — use `az containerapp logs show --tail N` (Azure API, not direct TCP) for reliable log access.
 
 ### P6-3 — Bug fixes: Qdrant resilience, heatmap correctness, pkg_resources (2026-05-21)
 

@@ -41,23 +41,34 @@ _SAFETY_QUERY = "crime robbery assault kidnapping safety woman female"
 _SAMPLE_INTERVAL_M = 500.0
 
 
-def init(qdrant_host: str, qdrant_port: int, bm25_model_path: Path) -> bool:
+def init(
+    qdrant_host: str,
+    qdrant_port: int,
+    bm25_model_path: Path,
+    qdrant_url: str = "",
+    qdrant_api_key: str = "",
+) -> bool:
     """
     Initialise the retrieval service. Called once from lifespan startup.
     Returns True if all components loaded successfully.
+    qdrant_url takes precedence over qdrant_host/qdrant_port when set (cloud mode).
     """
     global _client, _embed_model, _bm25, _ready
 
-    if not qdrant_host:
-        logger.info("QDRANT_HOST not set — retrieval features disabled (graceful)")
+    if not qdrant_url and not qdrant_host:
+        logger.info("QDRANT_HOST/QDRANT_URL not set — retrieval features disabled (graceful)")
         return False
 
-    # Connect to Qdrant
+    # Connect to Qdrant — cloud URL takes precedence over host:port
     try:
         from qdrant_client import QdrantClient
-        _client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=5)
+        if qdrant_url:
+            _client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key or None, timeout=5)
+            logger.info("Qdrant Cloud connected at %s", qdrant_url)
+        else:
+            _client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=5)
+            logger.info("Qdrant connected at %s:%d", qdrant_host, qdrant_port)
         _client.get_collections()  # cheap health check
-        logger.info("Qdrant connected at %s:%d", qdrant_host, qdrant_port)
     except Exception as exc:
         logger.warning("Qdrant unreachable (%s) — retrieval disabled", exc)
         return False

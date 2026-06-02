@@ -17,7 +17,14 @@ COLLECTION_NAME = "delhi_crimes"
 DENSE_SIZE = 384
 
 
-def get_client(host: str = "localhost", port: int = 6333) -> QdrantClient:
+def get_client(
+    host: str = "localhost",
+    port: int = 6333,
+    url: str = "",
+    api_key: str = "",
+) -> QdrantClient:
+    if url:
+        return QdrantClient(url=url, api_key=api_key or None)
     return QdrantClient(host=host, port=port)
 
 

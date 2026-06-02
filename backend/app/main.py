@@ -104,6 +104,8 @@ async def lifespan(_app: FastAPI):
     retrieval_service.init(
         qdrant_host=settings.QDRANT_HOST,
         qdrant_port=settings.QDRANT_PORT,
+        qdrant_url=settings.QDRANT_URL,
+        qdrant_api_key=settings.QDRANT_API_KEY,
         bm25_model_path=bm25_path,
     )
 

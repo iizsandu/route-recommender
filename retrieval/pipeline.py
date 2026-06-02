@@ -80,6 +80,8 @@ def run(
     db_name: str = "crime2",
     qdrant_host: str = "localhost",
     qdrant_port: int = 6333,
+    qdrant_url: str = "",
+    qdrant_api_key: str = "",
     rebuild: bool = False,
     dry_run: bool = False,
     limit: Optional[int] = None,
@@ -141,7 +143,7 @@ def run(
         return
 
     # Step 6 + 7: Create collection and upsert
-    qclient = qdrant_store.get_client(qdrant_host, qdrant_port)
+    qclient = qdrant_store.get_client(qdrant_host, qdrant_port, qdrant_url, qdrant_api_key)
     qdrant_store.create_collection(qclient, recreate=rebuild)
 
     points: list[PointStruct] = []

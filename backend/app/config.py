@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # Set to "localhost" in .env when running Qdrant via docker-compose locally.
     QDRANT_HOST: str = ""
     QDRANT_PORT: int = 6333
+    # Qdrant Cloud — takes precedence over QDRANT_HOST/QDRANT_PORT when set.
+    # URL format: https://<cluster-id>.<region>.gcp.cloud.qdrant.io
+    QDRANT_URL: str = ""
+    QDRANT_API_KEY: str = ""
     # Path to the BM25 model pickle produced by retrieval/pipeline.py.
     # Relative paths are anchored to repo root at startup.
     BM25_MODEL_PATH: str = "retrieval/bm25_model.pkl"
