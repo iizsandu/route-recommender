@@ -27,7 +27,10 @@ def configure(log_format: str, log_level: str) -> None:
         renderer = structlog.dev.ConsoleRenderer()
 
     structlog.configure(
-        processors=shared_processors + [renderer],
+        processors=shared_processors + [
+            structlog.processors.format_exc_info,  # WHY: renders exception tracebacks into log output; without this exc_info=True is silently swallowed
+            renderer,
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(
             # WHY: converts string level ("INFO") to the stdlib int constant
             getattr(logging, log_level.upper(), logging.INFO)

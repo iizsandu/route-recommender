@@ -130,8 +130,8 @@ def get_nearby_incidents(
             top_k=top_k,
             allowed_crime_types=allowed_crime_types,
         )
-    except Exception:
-        logger.exception("Qdrant search failed for (%.4f, %.4f)", lat, lng)
+    except Exception as exc:
+        logger.error("Qdrant search failed for (%.4f, %.4f): %s: %s", lat, lng, type(exc).__name__, exc)
         return []
 
 
