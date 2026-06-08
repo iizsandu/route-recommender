@@ -3,3 +3,31 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Crime popup — strip MapLibre's default padding/border so our card fills cleanly */
+.crime-popup .maplibregl-popup-content {
+  padding: 0 !important;
+  border-radius: 1rem !important;
+  overflow: hidden !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
+  border: none !important;
+  background: transparent !important;
+}
+.crime-popup .maplibregl-popup-tip {
+  border-top-color: white !important;
+}
+
+/* Slim scrollbar for the sidebar panel */
+aside::-webkit-scrollbar {
+  width: 4px;
+}
+aside::-webkit-scrollbar-track {
+  background: transparent;
+}
+aside::-webkit-scrollbar-thumb {
+  background-color: #e2e8f0;
+  border-radius: 4px;
+}
+aside::-webkit-scrollbar-thumb:hover {
+  background-color: #cbd5e1;
+}

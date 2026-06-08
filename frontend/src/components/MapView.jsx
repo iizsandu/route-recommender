@@ -10,25 +10,25 @@ const BAND_COLOR = {
 }
 
 const MACRO_COLOR = {
-  'Sexual Violence':   '#dc2626',
-  'Kidnapping':        '#ea580c',
-  'Robbery':           '#d97706',
-  'Assault':           '#ca8a04',
-  'Murder':            '#7c3aed',
-  'Terrorism / Riot':  '#991b1b',
-  'Theft / Burglary':  '#6b7280',
-  'Drug / Trafficking':'#9ca3af',
+  'Sexual Violence':    '#dc2626',
+  'Kidnapping':         '#ea580c',
+  'Robbery':            '#d97706',
+  'Assault':            '#ca8a04',
+  'Murder':             '#7c3aed',
+  'Terrorism / Riot':   '#991b1b',
+  'Theft / Burglary':   '#6b7280',
+  'Drug / Trafficking': '#9ca3af',
 }
 
 // Category pills — id matches the ?category= query param and heatmap_<id>.png filename
 const CATEGORIES = [
-  { id: 'all',             label: 'All',            color: '#ef4444', gradient: 'rgba(255,220,80,0.4), rgba(255,100,0,0.8), rgba(140,0,0,0.95)' },
-  { id: 'sexual_violence', label: 'Sex. Violence',  color: '#dc2626', gradient: 'rgba(255,200,210,0.4), rgba(220,0,50,0.8), rgba(100,0,20,0.95)' },
-  { id: 'robbery',         label: 'Robbery',        color: '#d97706', gradient: 'rgba(255,250,180,0.4), rgba(255,160,0,0.8), rgba(140,60,0,0.95)' },
-  { id: 'assault',         label: 'Assault',        color: '#b45309', gradient: 'rgba(255,230,200,0.4), rgba(220,110,20,0.8), rgba(100,30,0,0.95)' },
-  { id: 'kidnapping',      label: 'Kidnapping',     color: '#7c3aed', gradient: 'rgba(220,200,255,0.4), rgba(140,60,220,0.8), rgba(50,0,110,0.95)' },
-  { id: 'murder',          label: 'Murder',         color: '#374151', gradient: 'rgba(210,210,210,0.4), rgba(90,90,90,0.8), rgba(0,0,0,0.95)' },
-  { id: 'theft_burglary',  label: 'Theft',          color: '#0d9488', gradient: 'rgba(200,240,235,0.4), rgba(20,180,160,0.8), rgba(0,60,55,0.95)' },
+  { id: 'all',             label: 'All',           color: '#ef4444', gradient: 'rgba(255,220,80,0.4), rgba(255,100,0,0.8), rgba(140,0,0,0.95)' },
+  { id: 'sexual_violence', label: 'Sex. Violence', color: '#dc2626', gradient: 'rgba(255,200,210,0.4), rgba(220,0,50,0.8), rgba(100,0,20,0.95)' },
+  { id: 'robbery',         label: 'Robbery',       color: '#d97706', gradient: 'rgba(255,250,180,0.4), rgba(255,160,0,0.8), rgba(140,60,0,0.95)' },
+  { id: 'assault',         label: 'Assault',       color: '#b45309', gradient: 'rgba(255,230,200,0.4), rgba(220,110,20,0.8), rgba(100,30,0,0.95)' },
+  { id: 'kidnapping',      label: 'Kidnapping',    color: '#7c3aed', gradient: 'rgba(220,200,255,0.4), rgba(140,60,220,0.8), rgba(50,0,110,0.95)' },
+  { id: 'murder',          label: 'Murder',        color: '#374151', gradient: 'rgba(210,210,210,0.4), rgba(90,90,90,0.8), rgba(0,0,0,0.95)' },
+  { id: 'theft_burglary',  label: 'Theft',         color: '#0d9488', gradient: 'rgba(200,240,235,0.4), rgba(20,180,160,0.8), rgba(0,60,55,0.95)' },
 ]
 
 const DELHI_CENTER = { longitude: 77.2090, latitude: 28.6139, zoom: 11 }
@@ -60,6 +60,188 @@ function PinMarker({ label, color }) {
 }
 
 const HEATMAP_OPACITY = ['interpolate', ['linear'], ['zoom'], 8, 0.60, 13, 0.40, 15, 0.18]
+
+// ── Popup card helpers ────────────────────────────────────────────────────────
+
+function getSeverityConfig(crime_macro) {
+  if (['Murder', 'Sexual Violence', 'Kidnapping', 'Terrorism / Riot'].includes(crime_macro))
+    return { label: 'HIGH RISK',   color: '#ef4444', bg: '#fef2f2', textColor: 'text-red-600' }
+  if (['Robbery', 'Assault'].includes(crime_macro))
+    return { label: 'MEDIUM RISK', color: '#f59e0b', bg: '#fffbeb', textColor: 'text-amber-600' }
+  return   { label: 'ALERT',       color: '#3b82f6', bg: '#eff6ff', textColor: 'text-blue-600' }
+}
+
+function getCrimeIcon(crime_macro) {
+  const s = { stroke: 'white', strokeWidth: '1.8', strokeLinecap: 'round', strokeLinejoin: 'round', fill: 'none' }
+  switch (crime_macro) {
+    case 'Murder':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+          <path d="M12 4C8.134 4 5 7.134 5 11c0 2.387 1.21 4.49 3.05 5.76V19h7.9v-2.24C17.79 15.49 19 13.387 19 11c0-3.866-3.134-7-7-7z"/>
+          <circle cx="9.5" cy="11.5" r="1" fill="white" stroke="none"/>
+          <circle cx="14.5" cy="11.5" r="1" fill="white" stroke="none"/>
+          <path d="M9.5 19v-1.5h5V19"/>
+        </svg>
+      )
+    case 'Robbery': case 'Theft / Burglary':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>
+      )
+    case 'Kidnapping':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+          <rect x="5" y="11" width="14" height="11" rx="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          <circle cx="12" cy="16" r="1" fill="white" stroke="none"/>
+        </svg>
+      )
+    case 'Sexual Violence':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+          <circle cx="12" cy="12" r="9"/>
+          <line x1="12" y1="8" x2="12" y2="13"/>
+          <circle cx="12" cy="16.5" r="0.8" fill="white" stroke="none"/>
+        </svg>
+      )
+    case 'Assault':
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <circle cx="12" cy="17" r="0.8" fill="white" stroke="none"/>
+        </svg>
+      )
+    default:
+      return (
+        <svg width="18" height="18" viewBox="0 0 24 24" {...s}>
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <circle cx="12" cy="17" r="0.8" fill="white" stroke="none"/>
+        </svg>
+      )
+  }
+}
+
+function fmtPopupDate(dateStr) {
+  if (!dateStr) return null
+  const d = new Date(dateStr)
+  if (isNaN(d)) return null
+  return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+}
+
+function IncidentPopupCard({ inc, onClose }) {
+  const sev     = getSeverityConfig(inc.crime_macro)
+  const date    = fmtPopupDate(inc.crime_date)
+  const summary = inc.summary?.length > 200
+    ? inc.summary.slice(0, 200).trimEnd() + '…'
+    : inc.summary
+
+  return (
+    <div className="flex flex-col bg-white rounded-2xl overflow-hidden w-[320px] transition-all">
+      <div className="flex">
+        {/* ── Left severity strip ─────────────────────────────── */}
+        <div
+          className="flex flex-col items-center justify-start pt-4 pb-3 px-2.5 gap-2.5 min-w-[68px]"
+          style={{ backgroundColor: sev.bg }}
+        >
+          {/* Icon hex */}
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: sev.color }}
+          >
+            {getCrimeIcon(inc.crime_macro)}
+          </div>
+
+          {/* Risk label */}
+          <span
+            className={`text-center font-bold uppercase leading-tight ${sev.textColor}`}
+            style={{ fontSize: '8px', letterSpacing: '0.04em' }}
+          >
+            {sev.label}
+          </span>
+        </div>
+
+        {/* ── Right content ────────────────────────────────────── */}
+        <div className="flex-1 p-3 min-w-0 space-y-1.5">
+          {/* Title row */}
+          <div className="flex items-start justify-between gap-1">
+            <h3 className="text-sm font-bold text-gray-900 leading-tight">{inc.crime_macro}</h3>
+            <button
+              onClick={onClose}
+              className="text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0 mt-0.5 p-0.5"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/>
+              </svg>
+            </button>
+          </div>
+
+          {/* Crime sub-type */}
+          {inc.crime_type && inc.crime_type !== inc.crime_macro && (
+            <p className="text-xs text-gray-400 -mt-0.5">{inc.crime_type}</p>
+          )}
+
+          {/* Summary */}
+          {summary && (
+            <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">{summary}</p>
+          )}
+
+          {/* Metadata rows */}
+          <div className="space-y-1 pt-0.5">
+            {date && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+                <span>{date}</span>
+              </div>
+            )}
+            {inc.location_exact && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2C8.134 2 5 5.134 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.866-3.134-7-7-7z"/><circle cx="12" cy="9" r="2.5"/>
+                </svg>
+                <span className="truncate max-w-[160px]">{inc.location_exact}</span>
+              </div>
+            )}
+            {inc.victim && (
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>
+                </svg>
+                <span className="truncate max-w-[160px]">{inc.victim}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── CTA button ──────────────────────────────────────────── */}
+      {inc.url ? (
+        <a
+          href={inc.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-1.5 w-full py-2.5 text-xs font-semibold border-t border-gray-100 hover:bg-gray-50 transition-colors"
+          style={{ color: sev.color }}
+          onClick={e => e.stopPropagation()}
+        >
+          View Full Report
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </a>
+      ) : (
+        <div className="border-t border-gray-100 py-2 px-3">
+          <p className="text-xs text-gray-300 text-center">No source available</p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Remove any existing heatmap source+layer, then re-add from scratch.
 // WHY remove/re-add instead of updateImage: updateImage is fire-and-forget —
@@ -97,6 +279,132 @@ function _applyHeatmap(map, category, visible) {
   )
 }
 
+// ── Overlay sub-components ────────────────────────────────────────────────────
+
+function HeatmapControl({ showHeatmap, onToggle, activeCategory, onCategoryChange }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden min-w-[192px]">
+      {/* Toggle row */}
+      <button
+        onClick={onToggle}
+        className="flex items-center justify-between gap-3 w-full px-4 py-3 hover:bg-slate-50 transition-colors duration-150"
+      >
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 transition-colors duration-200 ${showHeatmap ? 'bg-indigo-500' : 'bg-slate-300'}`} />
+          <span className={`text-sm font-medium transition-colors duration-200 ${showHeatmap ? 'text-slate-800' : 'text-slate-400'}`}>
+            Crime Heatmap
+          </span>
+        </div>
+        {/* Toggle switch */}
+        <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${showHeatmap ? 'bg-indigo-600' : 'bg-slate-200'}`}>
+          <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${showHeatmap ? 'translate-x-[17px]' : 'translate-x-0.5'}`} />
+        </div>
+      </button>
+
+      {/* Category grid — only when heatmap is on */}
+      {showHeatmap && (
+        <div className="px-3 pb-3 border-t border-slate-100 pt-2.5">
+          {/* All button full width */}
+          <button
+            onClick={() => onCategoryChange('all')}
+            className="w-full px-2 py-1.5 rounded-lg text-xs font-medium mb-1 transition-all duration-150"
+            style={{
+              backgroundColor: activeCategory === 'all' ? CATEGORIES[0].color : '#f1f5f9',
+              color: activeCategory === 'all' ? 'white' : '#64748b',
+            }}
+          >
+            All Crime Types
+          </button>
+          {/* Other categories in a 2-column grid */}
+          <div className="grid grid-cols-2 gap-1">
+            {CATEGORIES.slice(1).map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => onCategoryChange(cat.id)}
+                className="px-2 py-1.5 rounded-lg text-left transition-all duration-150"
+                style={{
+                  fontSize: '11px',
+                  fontWeight: activeCategory === cat.id ? 600 : 400,
+                  backgroundColor: activeCategory === cat.id ? cat.color : '#f1f5f9',
+                  color: activeCategory === cat.id ? 'white' : '#64748b',
+                }}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RiskLegend({ activeCat }) {
+  return (
+    <div className="bg-white rounded-2xl shadow-md border border-slate-200 px-4 py-3.5 min-w-[160px]">
+      <p className="text-xs font-semibold text-slate-700 mb-3">Crime Risk Levels</p>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2.5">
+          <div className="w-3 h-3 rounded-full bg-emerald-500 flex-shrink-0" />
+          <span className="text-xs text-slate-600 font-medium">Low Risk</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <div className="w-3 h-3 rounded-full bg-amber-500 flex-shrink-0" />
+          <span className="text-xs text-slate-600 font-medium">Medium Risk</span>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
+          <span className="text-xs text-slate-600 font-medium">High Risk</span>
+        </div>
+      </div>
+      {activeCat && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <div
+            className="w-full h-2 rounded-full"
+            style={{ background: `linear-gradient(to right, ${activeCat.gradient})` }}
+          />
+          <div className="flex justify-between text-slate-400 mt-1" style={{ fontSize: '9px' }}>
+            <span>Lower</span><span>Higher</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RouteLegend() {
+  return (
+    <div className="bg-white rounded-2xl shadow-md border border-slate-200 px-4 py-3.5 min-w-[140px]">
+      <p className="text-xs font-semibold text-slate-700 mb-3">Route Types</p>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2.5">
+          <span className="text-sm select-none">🛡</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-1 rounded-full bg-emerald-500" />
+            <span className="text-xs text-slate-600">Safest</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="text-sm select-none">⚖</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-1 rounded-full bg-amber-400" />
+            <span className="text-xs text-slate-600">Balanced</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="text-sm select-none">⚡</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-1 rounded-full bg-red-400" />
+            <span className="text-xs text-slate-600">Fastest</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocations, personalisedIncidents = null }) {
   const mapRef = useRef(null)
   const [showHeatmap, setShowHeatmap]       = useState(true)
@@ -105,7 +413,7 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
   const [activePersonalisedPopup, setActivePersonalisedPopup] = useState(null)
   const [mapReady, setMapReady]             = useState(false)
 
-  const activeCat  = CATEGORIES.find(c => c.id === activeCategory)
+  const activeCat = CATEGORIES.find(c => c.id === activeCategory)
 
   function handleMapLoad() {
     _applyHeatmap(mapRef.current.getMap(), 'all', true)
@@ -173,19 +481,32 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
           const isSelected = i === selectedIdx
           return (
             <Source key={i} id={`route-${i}`} type="geojson" data={route.geometry}>
+              {/* Invisible wide hit-area for click detection */}
               <Layer
                 id={`route-${i}-hit`}
                 type="line"
-                paint={{ 'line-width': 20, 'line-opacity': 0 }}
+                paint={{ 'line-width': 24, 'line-opacity': 0 }}
                 onClick={() => onSelectRoute(i)}
               />
+              {/* Halo effect — wider blurred layer under the selected route */}
+              <Layer
+                id={`route-${i}-halo`}
+                type="line"
+                paint={{
+                  'line-color':   BAND_COLOR[route.risk_band],
+                  'line-width':   isSelected ? 20 : 0,
+                  'line-opacity': isSelected ? 0.18 : 0,
+                  'line-blur':    10,
+                }}
+              />
+              {/* Main route line */}
               <Layer
                 id={`route-${i}-line`}
                 type="line"
                 paint={{
                   'line-color':   BAND_COLOR[route.risk_band],
-                  'line-width':   isSelected ? 6 : 3,
-                  'line-opacity': isSelected ? 1 : 0.6,
+                  'line-width':   isSelected ? 7 : 2.5,
+                  'line-opacity': isSelected ? 1 : 0.35,
                 }}
               />
             </Source>
@@ -249,68 +570,44 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
         ))}
 
         {/* ── General incident popup ────────────────────────────────────── */}
-        {activeGeneralPopup !== null && generalIncidents[activeGeneralPopup] && (() => {
-          const inc = generalIncidents[activeGeneralPopup]
-          const summary = inc.summary?.length > 140
-            ? inc.summary.slice(0, 140).trimEnd() + '…'
-            : inc.summary
-          return (
-            <Popup
-              latitude={inc.lat}
-              longitude={inc.lng}
-              anchor="bottom"
-              offset={12}
+        {activeGeneralPopup !== null && generalIncidents[activeGeneralPopup] && (
+          <Popup
+            latitude={generalIncidents[activeGeneralPopup].lat}
+            longitude={generalIncidents[activeGeneralPopup].lng}
+            anchor="bottom"
+            offset={14}
+            onClose={() => setActiveGeneralPopup(null)}
+            closeButton={false}
+            closeOnClick={false}
+            maxWidth="340px"
+            className="crime-popup"
+          >
+            <IncidentPopupCard
+              inc={generalIncidents[activeGeneralPopup]}
               onClose={() => setActiveGeneralPopup(null)}
-              closeButton={true}
-              closeOnClick={false}
-              maxWidth="240px"
-            >
-              <div className="text-xs space-y-1 p-0.5">
-                <p className="font-semibold text-gray-800">{inc.crime_macro}</p>
-                {summary && <p className="text-gray-600 leading-snug">{summary}</p>}
-                {inc.location_exact && <p className="text-gray-400">{inc.location_exact}</p>}
-                {inc.victim && <p className="text-gray-400">Victim: {inc.victim}</p>}
-                {inc.url && (
-                  <a href={inc.url} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:text-indigo-700">
-                    Source ↗
-                  </a>
-                )}
-              </div>
-            </Popup>
-          )
-        })()}
+            />
+          </Popup>
+        )}
 
         {/* ── Personalised incident popup ───────────────────────────────── */}
-        {activePersonalisedPopup !== null && personalisedDots[activePersonalisedPopup] && (() => {
-          const inc = personalisedDots[activePersonalisedPopup]
-          const summary = inc.summary?.length > 140
-            ? inc.summary.slice(0, 140).trimEnd() + '…'
-            : inc.summary
-          return (
-            <Popup
-              latitude={inc.lat}
-              longitude={inc.lng}
-              anchor="bottom"
-              offset={12}
+        {activePersonalisedPopup !== null && personalisedDots[activePersonalisedPopup] && (
+          <Popup
+            latitude={personalisedDots[activePersonalisedPopup].lat}
+            longitude={personalisedDots[activePersonalisedPopup].lng}
+            anchor="bottom"
+            offset={22}
+            onClose={() => setActivePersonalisedPopup(null)}
+            closeButton={false}
+            closeOnClick={false}
+            maxWidth="340px"
+            className="crime-popup"
+          >
+            <IncidentPopupCard
+              inc={personalisedDots[activePersonalisedPopup]}
               onClose={() => setActivePersonalisedPopup(null)}
-              closeButton={true}
-              closeOnClick={false}
-              maxWidth="240px"
-            >
-              <div className="text-xs space-y-1 p-0.5">
-                <p className="font-semibold text-gray-800">{inc.crime_macro}</p>
-                {summary && <p className="text-gray-600 leading-snug">{summary}</p>}
-                {inc.location_exact && <p className="text-gray-400">{inc.location_exact}</p>}
-                {inc.victim && <p className="text-gray-400">Victim: {inc.victim}</p>}
-                {inc.url && (
-                  <a href={inc.url} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:text-indigo-700">
-                    Source ↗
-                  </a>
-                )}
-              </div>
-            </Popup>
-          )
-        })()}
+            />
+          </Popup>
+        )}
 
         {/* ── Origin / destination pins ─────────────────────────────────── */}
         {pinLocations?.origin && (
@@ -325,61 +622,29 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
         )}
       </Map>
 
-      {/* ── Heatmap controls (toggle + category pills) ───────────────────── */}
+      {/* ── Heatmap floating card (top-left) ─────────────────────────────── */}
       {mapReady && (
-        <div className="absolute top-3 left-3 z-10 flex flex-col gap-2">
-          {/* Toggle button */}
-          <button
-            onClick={() => setShowHeatmap(v => !v)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium shadow-md border transition-all bg-white ${
-              showHeatmap
-                ? 'border-indigo-300 text-indigo-700'
-                : 'border-gray-200 text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${showHeatmap ? 'bg-indigo-500' : 'bg-gray-300'}`} />
-            Risk heatmap
-          </button>
-
-          {/* Category pills — only visible when heatmap is on */}
-          {showHeatmap && (
-            <div className="bg-white/95 backdrop-blur-sm rounded-xl shadow-md border border-gray-100 p-2 flex flex-wrap gap-1 max-w-[200px]">
-              {CATEGORIES.map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className="px-2 py-0.5 rounded-full text-white transition-all"
-                  style={{
-                    fontSize: '10px',
-                    fontWeight: activeCategory === cat.id ? 700 : 400,
-                    backgroundColor: activeCategory === cat.id ? cat.color : '#d1d5db',
-                    opacity: activeCategory === cat.id ? 1 : 0.75,
-                  }}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="absolute top-4 left-4 z-10">
+          <HeatmapControl
+            showHeatmap={showHeatmap}
+            onToggle={() => setShowHeatmap(v => !v)}
+            activeCategory={activeCategory}
+            onCategoryChange={setActiveCategory}
+          />
         </div>
       )}
 
-      {/* ── Legend ───────────────────────────────────────────────────────── */}
+      {/* ── Risk legend (bottom-left) ─────────────────────────────────────── */}
       {showHeatmap && mapReady && (
-        <div className="absolute bottom-8 left-3 z-10 bg-white/90 backdrop-blur-sm rounded-xl shadow-md border border-gray-100 px-3 py-2.5 text-xs">
-          <p className="font-semibold text-gray-500 mb-2 uppercase tracking-wide" style={{ fontSize: '10px' }}>
-            {activeCat?.label ?? 'All'} Risk
-          </p>
-          <div
-            className="w-28 h-2.5 rounded-full mb-1"
-            style={{ background: `linear-gradient(to right, ${activeCat?.gradient ?? CATEGORIES[0].gradient})` }}
-          />
-          <div className="flex justify-between text-gray-400 mb-1" style={{ fontSize: '9px' }}>
-            <span>Lower</span><span>Higher</span>
-          </div>
-          <p className="text-gray-300 leading-tight" style={{ fontSize: '9px' }}>
-            Transparent = low risk
-          </p>
+        <div className="absolute bottom-6 left-4 z-10">
+          <RiskLegend activeCat={activeCat} />
+        </div>
+      )}
+
+      {/* ── Route type legend (bottom-right) ─────────────────────────────── */}
+      {routes.length > 0 && mapReady && (
+        <div className="absolute bottom-6 right-4 z-10">
+          <RouteLegend />
         </div>
       )}
     </div>

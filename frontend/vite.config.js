@@ -15,5 +15,11 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
+    // WHY: Windows host + Docker container = inotify events never reach the
+    // container. Without polling, Vite never detects file changes on Windows.
+    watch: {
+      usePolling: true,
+      interval: 300,
+    },
   },
 })

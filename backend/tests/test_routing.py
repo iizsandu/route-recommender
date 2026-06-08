@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import app.services.routing as routing_module
-from app.services.routing import _sample_waypoints, _cache_key
+from app.services.routing import _sample_waypoints, _cache_key, _route_fingerprint, _deduplicate_routes
 from app.utils.cache import TTLCache
 
 # ---------------------------------------------------------------------------
@@ -43,6 +43,48 @@ def test_sample_waypoints_interval():
     for lat, lng in result:
         assert 28.0 <= lat <= 30.0
         assert 76.0 <= lng <= 79.0
+
+
+def test_route_fingerprint_empty():
+    """Empty coordinate list returns an empty tuple."""
+    assert _route_fingerprint([]) == ()
+
+
+def test_route_fingerprint_rounds_to_3dp():
+    """Coordinates are rounded to 3 decimal places in the fingerprint."""
+    coords = [[77.20901, 28.61391], [77.21999, 28.62999]]
+    fp = _route_fingerprint(coords)
+    assert fp == ((77.209, 28.614), (77.22, 28.63))
+
+
+def test_deduplicate_routes_removes_identical_geometry():
+    """Two routes with the same coordinate list are deduplicated to one."""
+    coords = [[77.2, 28.6], [77.21, 28.61], [77.22, 28.62]]
+    make = lambda: {"geometry": {"coordinates": coords}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
+    result = _deduplicate_routes([make(), make()])
+    assert len(result) == 1
+
+
+def test_deduplicate_routes_keeps_distinct_geometry():
+    """Routes with different coordinate paths are both kept."""
+    route_a = {"geometry": {"coordinates": [[77.2, 28.6], [77.21, 28.61]]}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
+    route_b = {"geometry": {"coordinates": [[77.2, 28.6], [77.25, 28.65]]}, "duration_sec": 310.0, "distance_m": 1600.0, "waypoints": []}
+    result = _deduplicate_routes([route_a, route_b])
+    assert len(result) == 2
+
+
+def test_deduplicate_routes_preserves_order():
+    """The first occurrence of each unique route is kept (stable order)."""
+    coords_a = [[77.2, 28.6], [77.21, 28.61]]
+    coords_b = [[77.2, 28.6], [77.25, 28.65]]
+    coords_c = [[77.2, 28.6], [77.21, 28.61]]  # duplicate of a
+    route_a = {"geometry": {"coordinates": coords_a}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
+    route_b = {"geometry": {"coordinates": coords_b}, "duration_sec": 400.0, "distance_m": 2000.0, "waypoints": []}
+    route_c = {"geometry": {"coordinates": coords_c}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
+    result = _deduplicate_routes([route_a, route_b, route_c])
+    assert len(result) == 2
+    assert result[0]["duration_sec"] == 300.0
+    assert result[1]["duration_sec"] == 400.0
 
 
 def test_cache_key_rounds_to_4dp():
