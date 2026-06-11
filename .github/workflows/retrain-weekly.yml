@@ -21,6 +21,11 @@ jobs:
       contents: write   # WHY write: update "ml-artifacts" release after successful retrain
       issues: write     # WHY write: open issue when data validation fails
       actions: write    # WHY write: trigger backend-deploy.yml after artifact update
+    # WHY job-level env: secrets can't be used in if: expressions, but env vars
+    # defined at job level ARE accessible. Map the optional secret here so the
+    # Slack steps can check `env.SLACK_WEBHOOK != ''` in their if: conditions.
+    env:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
     steps:
       - name: Checkout
@@ -128,6 +133,43 @@ jobs:
         # to Production. Running before promote would score with the challenger.
         run: python -m ml.generate_heatmap --artifacts ml/artifacts
 
+      - name: Build edge risk scores
+        id: edge_risk
+        # WHY after heatmap (i.e. after promote): edge_risk.json is scored with
+        # the freshly-promoted KDE models. gh_edges.csv is committed to the repo
+        # (Option W1 per phase7_plan.md §8c) so the runner always has it.
+        run: python -m ml.build_edge_risk --snapshot "${{ steps.snapshot.outputs.path }}"
+
+      - name: Validate edge risk coverage
+        # Fail the job if fewer than 10% of GH edges have a non-zero crime score.
+        # This catches a shrinking crime pool before a bad edge_risk.json is published.
+        run: |
+          python -c "
+          import json, sys
+          with open('ml/artifacts/edge_risk.json') as f:
+              d = json.load(f)
+          scores    = d['edge_scores']
+          n_total   = d['metadata']['n_edges_total']
+          n_nonzero = sum(1 for v in scores.values() if v > 0)
+          coverage  = n_nonzero / n_total if n_total else 0
+          print(f'Edge risk coverage: {n_nonzero}/{n_total} ({coverage:.1%})')
+          if coverage < 0.10:
+              print('FAIL: coverage below 10% — widen buffer or investigate crime pool')
+              sys.exit(1)
+          print('PASS')
+          "
+
+      - name: Upload edge_risk.json artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-risk-${{ github.run_id }}
+          path: ml/artifacts/edge_risk.json
+          retention-days: 30
+          # After downloading: replace ml/artifacts/edge_risk.json locally, then:
+          #   docker compose restart graphhopper
+          # The CrimeWeighting startup log will confirm the new match rate.
+
       # ── Persistence ─────────────────────────────────────────────────────────
 
       # WHY save even on failure: a partial mlruns.db is still useful for
@@ -184,7 +226,10 @@ jobs:
       # WHY skip gracefully when secret absent: SLACK_WEBHOOK is optional.
       # Portfolio / solo dev setup won't have Slack; skip rather than error.
       - name: Notify Slack on success
-        if: success() && secrets.SLACK_WEBHOOK != ''
+        # WHY env var not secrets in if: secrets context is unavailable in
+        # if: expressions. Map to SLACK_WEBHOOK env var at step level; the
+        # action is skipped entirely when the env var is empty.
+        if: success() && env.SLACK_WEBHOOK != ''
         uses: slackapi/slack-github-action@v1
         with:
           payload: |
@@ -192,11 +237,11 @@ jobs:
               "text": ":white_check_mark: *Retrain succeeded* — model promoted to Production.\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             }
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
 
       - name: Notify Slack on failure
-        if: failure() && secrets.SLACK_WEBHOOK != ''
+        if: failure() && env.SLACK_WEBHOOK != ''
         uses: slackapi/slack-github-action@v1
         with:
           payload: |
@@ -204,5 +249,5 @@ jobs:
               "text": ":x: *Retrain failed* — champion model unchanged.\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             }
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

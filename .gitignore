@@ -17,8 +17,14 @@ htmlcov/
 .env
 *.env.local
 
-# ML artefacts
-ml/artifacts/
+# ML artefacts — individual rules instead of blanket ml/artifacts/ so that
+# gh_edges.csv can be committed (CI needs it to rebuild edge_risk.json weekly).
+ml/artifacts/*.pkl
+ml/artifacts/*.json
+ml/artifacts/*.geojson
+ml/artifacts/*.png
+ml/artifacts/mlruns.db
+ml/artifacts/mlruns/
 ml/data/snapshots/
 ml/data/audit/
 *.pkl
@@ -41,3 +47,10 @@ Thumbs.db
 
 # Docker
 # (intentionally not ignoring .dockerignore — it is committed to version control)
+
+# GraphHopper — OSM data too large for git
+# gh_edges.csv is NOT ignored — it is committed (Option W1 per phase7_plan.md §8c)
+# so the weekly retrain CI can run build_edge_risk.py without a manual download step.
+# Regenerate gh_edges.csv only when the PBF is replaced (re-run Stage 0: EdgeExporter).
+graphhopper/data/*.pbf
+graphhopper/data/*.osm

@@ -1,0 +1,28 @@
+graphhopper:
+  graph.location: /graphhopper/graph-cache
+  datareader.file: /data/delhi-ncr-latest.osm.pbf
+
+  import.osm.ignored_highways: []
+
+  # Bootstrap config: fastest profile only.
+  # Used when edge_risk.json is absent (first-time setup, before Stage 2 is run).
+  # Also used during Stage 0: build graph + run EdgeExporter, then switch to config.yml.
+  # WHY custom_model: {} not custom_model_files: []: empty files list → null Java
+  # object → NPE in prepareImport. Inline {} gives non-null CustomModel with defaults.
+  profiles:
+    - name: fastest
+      weighting: custom
+      custom_model: {}
+
+  profiles_ch: []
+  profiles_lm: []
+
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 127.0.0.1

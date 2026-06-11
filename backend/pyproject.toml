@@ -1,7 +1,8 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# WHY: asyncio_mode=auto means pytest-asyncio handles async test functions
-# without needing @pytest.mark.asyncio on every test
+# WHY pythonpath: adds backend/ to sys.path so `import app.*` works without
+# setting PYTHONPATH manually in CI or locally.
+pythonpath = ["."]
 asyncio_mode = "auto"
 
 [tool.ruff]

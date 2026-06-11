@@ -31,9 +31,25 @@ class Settings(BaseSettings):
     COSMOS_DATABASE_NAME: str = "route_recommender"
     COSMOS_CONTAINER_NAME: str = "structured_crimes"
 
-    # --- OpenRouteService ---
-    # WHY: no default — service refuses to start if this env var is absent
-    ORS_API_KEY: str
+    # --- GraphHopper routing (Phase 8) ---
+    # Local dev: http://localhost:8989 (docker compose up graphhopper)
+    # Production: Cloudflare Tunnel URL (set in Azure Container Apps env vars)
+    GRAPHHOPPER_URL: str = "http://localhost:8989"
+
+    # Default routing profile when the request doesn't specify one.
+    # "fastest" = travel time only. "balanced" = moderate crime penalty (λ=0.1).
+    # "safest" = strong crime penalty (λ=0.3).
+    SAFETY_PROFILE: str = "balanced"
+
+    # Comma-separated list of valid profile names. Used to validate per-request
+    # profile selection so unknown values are rejected before reaching GH.
+    GRAPHHOPPER_PROFILES: str = "fastest,balanced,safest"
+
+    # --- OpenRouteService (DEPRECATED — emergency fallback only) ---
+    # WHY empty default: ORS is no longer the primary router. If GRAPHHOPPER_URL
+    # is unreachable, set ORS_API_KEY to a real key in Azure env vars to serve
+    # routes without crime awareness until GH is restored.
+    ORS_API_KEY: str = ""
     ORS_BASE_URL: str = "https://api.openrouteservice.org"
 
     # --- MLflow ---

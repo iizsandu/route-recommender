@@ -1,0 +1,52 @@
+graphhopper:
+  graph.location: /graphhopper/graph-cache
+  datareader.file: /data/delhi-ncr-latest.osm.pbf
+
+  # Required by GH 9.1 — omitting it throws IllegalArgumentException at startup.
+  # Empty list = import all highway types (car routing is restricted by the
+  # car_access encoded value, not by dropping highways at import time).
+  import.osm.ignored_highways: []
+
+  profiles:
+    # GH 9.x removed the built-in "fastest" weighting name.
+    # "custom" with an empty custom_model is equivalent: no speed/priority adjustments
+    # means GH uses every road's encoded max speed — i.e., fastest routing.
+    # WHY custom_model: {} not custom_model_files: []: an empty files list leaves the
+    # CustomModel Java object null; GH's prepareImport NPEs on null. An inline empty
+    # object gives a non-null CustomModel with all-default values.
+    - name: fastest
+      weighting: custom
+      custom_model: {}
+
+    # crime_aware is our custom weighting registered in the patched DefaultWeightingFactory.
+    # No "vehicle" key — GH 9.1 rejects it and throws at startup.
+    - name: balanced
+      weighting: crime_aware
+      crime_aware.lambda: 0.1
+      crime_aware.edge_risk_path: /data/edge_risk.json
+
+    - name: safest
+      weighting: crime_aware
+      crime_aware.lambda: 0.3
+      crime_aware.edge_risk_path: /data/edge_risk.json
+
+  # WHY empty lists: CH bakes weights into the graph at preprocessing time.
+  # CrimeWeighting reads edge_risk.json at startup — if the JSON changes weekly,
+  # CH-prepared shortcuts become stale and routing silently gives wrong results.
+  # Flexible (non-CH) routing on Delhi's graph (~89K edges) completes in <200ms.
+  # WHY profiles_ch/profiles_lm not prepare.ch.weightings: the key was renamed
+  # in GH 9.1; prepare.ch.weightings throws IllegalStateException at startup.
+  profiles_ch: []
+  profiles_lm: []
+
+# WHY top-level: GH 9.1 "server:" must NOT be nested under "graphhopper:".
+# WHY bind_host (snake_case): GH 9.1 uses snake_case; bindHost fails silently.
+server:
+  application_connectors:
+    - type: http
+      port: 8989
+      bind_host: 0.0.0.0
+  admin_connectors:
+    - type: http
+      port: 8990
+      bind_host: 127.0.0.1

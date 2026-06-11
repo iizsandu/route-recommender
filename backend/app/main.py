@@ -12,6 +12,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+import httpx
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
 from app.utils.logger import configure as configure_logging, get_logger, request_id_var
@@ -34,6 +35,28 @@ from app.services.risk_model import load_model, load_lightgbm_models, reload_fro
 from app.services import retrieval_service
 
 settings = Settings()
+
+
+async def _check_graphhopper_health(
+    url: str, retries: int = 3, delay: float = 10.0
+) -> bool:
+    """
+    Ping GH's /health endpoint up to `retries` times.
+    Returns True on the first 200 response, False if all attempts fail.
+    WHY retry loop: GH may still be starting up when the backend lifespan runs
+    (especially on cold starts without docker-compose healthcheck enforcement).
+    """
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{url}/health")
+                if resp.status_code == 200:
+                    return True
+        except Exception:
+            pass
+        if attempt < retries - 1:
+            await asyncio.sleep(delay)
+    return False
 
 
 async def _hot_reload_loop(interval_seconds: int) -> None:
@@ -108,6 +131,22 @@ async def lifespan(_app: FastAPI):
         qdrant_api_key=settings.QDRANT_API_KEY,
         bm25_model_path=bm25_path,
     )
+
+    # ── GraphHopper health check ──────────────────────────────────────────────
+    # Tries up to 3 times (10s apart) so transient startup delays don't trigger
+    # a warning. Logs WARNING (not error) — the backend still starts; routing
+    # requests return 503 until GH is ready. In docker compose this is a
+    # belt-and-suspenders check; depends_on: service_healthy already guarantees
+    # GH is ready before the backend container starts.
+    gh_healthy = await _check_graphhopper_health(settings.GRAPHHOPPER_URL)
+    if not gh_healthy:
+        logger.warning(
+            "GraphHopper not reachable at startup",
+            url=settings.GRAPHHOPPER_URL,
+            note="routing requests will return 503 until GH is available",
+        )
+    else:
+        logger.info("GraphHopper health check passed", url=settings.GRAPHHOPPER_URL)
 
     # Start background reload loop — checks MLflow registry every hour.
     reload_task = asyncio.create_task(

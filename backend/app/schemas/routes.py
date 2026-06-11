@@ -21,6 +21,11 @@ class RouteRequest(BaseModel):
     depart_time: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
+    # Optional per-request profile. None = use SAFETY_PROFILE server default.
+    # Valid values: "fastest", "balanced", "safest" (validated in routing.py).
+    # WHY not Literal: the valid set comes from GRAPHHOPPER_PROFILES config,
+    # which can be changed without a code deploy.
+    profile: Optional[str] = None
 
 
 class IncidentResult(BaseModel):

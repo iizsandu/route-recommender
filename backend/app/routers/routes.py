@@ -98,19 +98,24 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
         if depart_time.tzinfo is None:
             depart_time = depart_time.replace(tzinfo=timezone.utc)
 
-        ck = _cache_key(lat_o, lng_o, lat_d, lng_d, depart_time, "driving-car")
+        # Use the request profile (or server default if not specified).
+        # The cache key includes the profile so fastest/balanced/safest
+        # each get their own cache entry.
+        profile = req.profile or settings.SAFETY_PROFILE
+        ck = _cache_key(lat_o, lng_o, lat_d, lng_d, depart_time, profile)
         cached = _RESPONSE_CACHE.get(ck)
         if cached is not None:
             logger.debug("route cache hit", extra={"cache_key": ck})
             return cached
 
-        # ── Fetch alternative routes from ORS ────────────────────────────
+        # ── Fetch alternative routes from GraphHopper ────────────────────
         raw_routes = await routing.get_routes(
             origin=(lat_o, lng_o),
             dest=(lat_d, lng_d),
+            profile=profile,
         )
         if not raw_routes:
-            raise HTTPException(status_code=502, detail="ORS returned no routes")
+            raise HTTPException(status_code=502, detail="GraphHopper returned no routes")
 
         # ── Score each route ─────────────────────────────────────────────
         scored: list[tuple[float, dict]] = []

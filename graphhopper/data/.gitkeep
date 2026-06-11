@@ -1,0 +1,5 @@
+# Place delhi-ncr-latest.osm.pbf here.
+# Download from: https://download.geofabrik.de/asia/india/delhi-latest.osm.pbf
+# Save as:       graphhopper/data/delhi-ncr-latest.osm.pbf
+# After GraphHopper first startup, gh_edges.csv will also appear here.
+# Both files are gitignored — do not commit them.

@@ -1,4 +1,30 @@
 services:
+  graphhopper:
+    build:
+      context: ./graphhopper
+      dockerfile: Dockerfile
+    ports:
+      - "8989:8989"
+    volumes:
+      # PBF and edge-risk data are read-only from the container's perspective.
+      - ./graphhopper/data/delhi-ncr-latest.osm.pbf:/data/delhi-ncr-latest.osm.pbf:ro
+      - ./ml/artifacts/edge_risk.json:/data/edge_risk.json:ro
+      # gh_edges.csv is writable so EdgeExporter can write into it from the container.
+      - ./ml/artifacts/gh_edges.csv:/data/gh_edges.csv
+      # Named volume keeps the compiled binary graph across restarts (3-5 min to rebuild).
+      - graphhopper_graph:/graphhopper/graph-cache
+    environment:
+      - JAVA_OPTS=-Xmx3g -Xms512m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/health"]
+      interval: 15s
+      timeout: 5s
+      # WHY start_period=600s: graph preprocessing takes up to 10 min on first run.
+      # Health checks only start counting retries after this window.
+      start_period: 600s
+      retries: 40
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:v1.13.4
     ports:
@@ -19,7 +45,12 @@ services:
     env_file:
       - .env
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_started
+      # WHY service_healthy: backend must not start while GH is still preprocessing
+      # (that 5-10 min window). The backend would flood logs with 503 errors otherwise.
+      graphhopper:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -40,3 +71,10 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+volumes:
+  # WHY named volume: prevents GH reprocessing the Delhi graph (3-5 min) on every restart.
+  # Delete with: docker volume rm route_recommender_web_graphhopper_graph
+  # Required when: PBF replaced, config.yml profile names changed, Java weighting changed.
+  graphhopper_graph:
+    driver: local
