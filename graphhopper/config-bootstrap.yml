@@ -4,6 +4,11 @@ graphhopper:
 
   import.osm.ignored_highways: []
 
+  # WHY: must match config.yml's graph.encoded_values so the graph built here
+  # can be loaded by config.yml without a profile fingerprint mismatch.
+  # car_access + car_average_speed are required by CrimeWeighting's factory.
+  graph.encoded_values: car_access, car_average_speed
+
   # Bootstrap config: fastest profile only.
   # Used when edge_risk.json is absent (first-time setup, before Stage 2 is run).
   # Also used during Stage 0: build graph + run EdgeExporter, then switch to config.yml.
@@ -12,7 +17,10 @@ graphhopper:
   profiles:
     - name: fastest
       weighting: custom
-      custom_model: {}
+      custom_model:
+        speed:
+          - if: "true"
+            limit_to: 90
 
   profiles_ch: []
   profiles_lm: []

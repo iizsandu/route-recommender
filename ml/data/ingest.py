@@ -284,7 +284,23 @@ def run_from_json(
 
 if __name__ == "__main__":
     import argparse
+    import os
     import sys
+
+    # Auto-load .env from repo root so this script works regardless of CWD.
+    # Uses partition("=") so connection strings with embedded = signs are preserved.
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    _DOTENV = _REPO_ROOT / ".env"
+    if _DOTENV.exists():
+        for _raw in _DOTENV.read_text(encoding="utf-8").splitlines():
+            _line = _raw.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _, _v = _line.partition("=")
+            _k = _k.strip()
+            _v = _v.strip().strip('"').strip("'")
+            if _k and _k not in os.environ:
+                os.environ[_k] = _v
 
     logging.basicConfig(
         level=logging.INFO,
@@ -329,7 +345,6 @@ Examples:
 
     else:
         # ── Production path ───────────────────────────────────────────────────
-        import os
         conn = os.environ.get("COSMOS_CONNECTION_STRING")
         if not conn:
             logger.error(

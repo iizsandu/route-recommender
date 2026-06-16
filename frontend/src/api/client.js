@@ -27,3 +27,20 @@ export async function getPersonalisedIncidents(situation, waypoints, radiusKm = 
     return []
   }
 }
+
+export async function queryAgent(audioBlob) {
+  const form = new FormData()
+  form.append('audio', audioBlob, 'recording.webm')
+  try {
+    const res = await client.post('/agent/query', form, {
+      // WHY override Content-Type: axios sets 'application/json' by default from
+      // the instance config. For multipart/form-data the browser must set its own
+      // boundary parameter — passing undefined lets axios + browser do this correctly.
+      headers: { 'Content-Type': undefined },
+      timeout: 60_000,
+    })
+    return res.data   // { transcript, response }
+  } catch {
+    return null
+  }
+}

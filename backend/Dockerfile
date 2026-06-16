@@ -14,6 +14,13 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ffmpeg: faster-whisper uses it to decode WebM/Ogg/MP4 audio sent from the browser.
+# WHY separate RUN from pip: keeps the apt cache layer independent so a pip change
+# doesn't force re-downloading ffmpeg and vice versa.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+
 COPY backend/app/ ./app/
 
 # ML module needed so pickle.load can reconstruct FixedBandwidthKDE objects.
@@ -33,5 +40,13 @@ COPY retrieval/ /repo/retrieval/
 # Pre-download the bge-small embedding model into the image layer so cold-starts
 # don't hit HuggingFace at runtime (Container Apps has no persistent cache dir).
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
+
+# Pre-download Whisper base model weights into the image layer.
+# WHY bake-in: Container Apps has no persistent cache; cold-start would hit
+# HuggingFace on first request, adding 30-60s delay.
+# WHY device=cpu here even if WHISPER_DEVICE=cuda at runtime: the model weights
+# are device-agnostic — they download once and load onto whichever device is set
+# in the env var at startup.
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

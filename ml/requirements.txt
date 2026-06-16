@@ -5,7 +5,7 @@ scikit-learn==1.4.1.post1
 mlflow==2.11.0
 great-expectations==0.18.10
 azure-cosmos==4.5.1
-pyarrow==15.0.0
+# pyarrow==15.0.0
 h3==3.7.7
 lightgbm==4.3.0
 # Phase 8 (GraphHopper edge risk pipeline)

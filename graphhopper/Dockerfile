@@ -24,14 +24,27 @@ COPY src/CrimeWeighting.java \
 COPY src/DefaultWeightingFactoryPatch.java \
      /build/graphhopper/core/src/main/java/com/graphhopper/routing/DefaultWeightingFactory.java
 
-# EdgeExporter goes into the tools module (separate JAR, separate main class).
-COPY tools/EdgeExporter.java \
-     /build/graphhopper/tools/src/main/java/com/graphhopper/tools/EdgeExporter.java
-
 # Build web + tools modules and their transitive dependencies.
 # -pl web,tools -am: only these modules + what they depend on (avoids building
 # navigation/docs/etc. which saves ~3 minutes and is not needed at runtime).
+# EdgeExporter is NOT included here — it imports GraphHopperServerConfiguration
+# (graphhopper-web) and YAMLFactory (jackson-dataformat-yaml) which are not on
+# the tools module classpath. It is compiled separately below against the web fat jar.
 RUN cd /build/graphhopper && mvn package -DskipTests -pl web,tools -am
+
+# Compile EdgeExporter separately — it needs graphhopper-web classes
+# (GraphHopperServerConfiguration, YAMLFactory) not on the tools module classpath.
+# Output: /build/edge-exporter.jar (standalone, loaded alongside graphhopper.jar).
+# Runtime invocation: java -cp "/app/edge-exporter.jar:/app/graphhopper.jar" \
+#                          com.graphhopper.tools.EdgeExporter <graph-dir> <csv> <config.yml>
+COPY tools/EdgeExporter.java /build/EdgeExporter.java
+RUN set -ex \
+    && GH_WEB=$(find /build/graphhopper/web/target -maxdepth 1 -name "graphhopper-web-*.jar" \
+                ! -name "*sources*" ! -name "*javadoc*" | head -1) \
+    && echo "[EdgeExporter compile] using: $GH_WEB" \
+    && mkdir -p /build/edge_cls \
+    && javac -cp "$GH_WEB" /build/EdgeExporter.java -d /build/edge_cls/ \
+    && jar cf /build/edge-exporter.jar -C /build/edge_cls/ .
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM eclipse-temurin:17-jre
@@ -47,6 +60,11 @@ WORKDIR /app
 # Copy the built JARs from the build stage.
 COPY --from=builder /build/graphhopper/web/target/graphhopper-web-*.jar  /app/graphhopper.jar
 COPY --from=builder /build/graphhopper/tools/target/graphhopper-tools-*.jar /app/graphhopper-tools.jar
+# edge-exporter.jar is compiled separately against the web fat jar (has access
+# to GraphHopperServerConfiguration + YAMLFactory which tools module lacks).
+# Run with: java -cp "/app/edge-exporter.jar:/app/graphhopper.jar" \
+#               com.graphhopper.tools.EdgeExporter <graph-dir> <csv> <config.yml>
+COPY --from=builder /build/edge-exporter.jar /app/edge-exporter.jar
 
 # Copy the configuration files and entrypoint script.
 COPY config.yml           /app/config.yml

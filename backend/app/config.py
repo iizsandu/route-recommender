@@ -72,11 +72,13 @@ class Settings(BaseSettings):
     # No default — service refuses to start without trained model artifacts.
     KDE_ARTIFACTS_DIR: str
 
-    # Banding thresholds — city-wide p33/p66 derived by scoring 400 random
-    # points uniformly across Delhi's bounding box (28.40–28.88°N, 76.84–77.55°E).
-    # Recalibrate after each retrain by running the banding calibration notebook cell.
-    BAND_LOW_THRESHOLD: float = 0.0713   # Low / Medium boundary  (p33)
-    BAND_HIGH_THRESHOLD: float = 0.9142  # Medium / High boundary (p66)
+    # Banding thresholds — p33/p66 of real ROUTE total_scores (not per-point
+    # densities). score_route() returns route_eta_sec × mean(per-waypoint score),
+    # so thresholds live on that accumulated scale (~10^4), NOT raw KDE density.
+    # Regenerate after each retrain with: python -m ml.calibrate_bands
+    # (routes 150 Delhi pairs through GH at noon, USE_LIGHTGBM matching the backend).
+    BAND_LOW_THRESHOLD: float = 35671.76   # Low / Medium boundary  (p33)
+    BAND_HIGH_THRESHOLD: float = 58229.06  # Medium / High boundary (p66)
 
     # How often (seconds) the background task checks the MLflow registry
     # for a newer Production model. Default: 3600 (hourly).
@@ -117,3 +119,27 @@ class Settings(BaseSettings):
     # Path to the BM25 model pickle produced by retrieval/pipeline.py.
     # Relative paths are anchored to repo root at startup.
     BM25_MODEL_PATH: str = "retrieval/bm25_model.pkl"
+
+    # --- Voice AI Agent ---
+    # LLM_PROVIDER controls which LLM the CrewAI agent uses.
+    # "ollama"    → gemma4:e4b running locally via Ollama (free, private)
+    # "anthropic" → Claude via Anthropic API (cloud, needs API key)
+    LLM_PROVIDER: Literal["ollama", "anthropic"] = "ollama"
+
+    # Ollama settings (used when LLM_PROVIDER="ollama")
+    # host.docker.internal reaches the Windows host from inside a Docker container.
+    # Change to http://localhost:11434 when running backend directly on host.
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
+    OLLAMA_MODEL: str = "gemma4:e4b"
+
+    # Anthropic settings (used when LLM_PROVIDER="anthropic")
+    ANTHROPIC_API_KEY: str = ""
+    AGENT_MODEL: str = "claude-sonnet-4-6"
+
+    # Whisper transcription model size. Larger = more accurate, slower.
+    # "base" is a good balance for clear speech in a quiet room.
+    WHISPER_MODEL_SIZE: Literal["tiny", "base", "small"] = "base"
+    # "cpu" always in Docker (no GPU in Azure Container Apps Consumption plan).
+    # Set to "cuda" only on a host that has an NVIDIA GPU + CUDA toolkit installed.
+    WHISPER_DEVICE: Literal["cpu", "cuda"] = "cpu"
+

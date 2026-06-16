@@ -100,12 +100,33 @@ public class CrimeWeighting extends AbstractWeighting {
     }
 
     // ── Core routing method ───────────────────────────────────────────────────
-    // Called by A*/Dijkstra for every edge considered during pathfinding.
+    // Called by A*/Dijkstra for every edge considered during pathfinding, AND by
+    // PrepareRoutingSubnetworks for ALL edges in BOTH directions to find connected
+    // components. Must return Double.POSITIVE_INFINITY for inaccessible directions.
     // Return value unit: SECONDS. GH 9.1 convention for calcEdgeWeight.
     // Using milliseconds here would break the A* heuristic (calcMinWeightPerDistance
     // returns seconds/metre — a 1000× mismatch would produce wrong routes).
     @Override
     public double calcEdgeWeight(EdgeIteratorState edge, boolean reverse) {
+        // ── Accessibility guard ───────────────────────────────────────────────
+        // WHY car_access (not speed): on one-way streets GH stores a non-zero
+        // speed in BOTH directions but encodes the restriction in car_access only
+        // (observed edge: fwd:false, bwd:true, fwd-speed=bwd-speed=54). So
+        // "speed == 0" is NOT a reliable blocked-direction test — car_access is.
+        // Returning here, before calcEdgeMillis, also avoids the wrong-direction
+        // IllegalStateException that AbstractWeighting.calcEdgeMillis throws (and
+        // which crashes PrepareRoutingSubnetworks) on a one-way edge's blocked side.
+        //
+        // WHY POSITIVE_INFINITY (not MAX_VALUE): this is the actual fix. GH's
+        // Weighting contract, its snap filter, and PrepareRoutingSubnetworks all
+        // detect a blocked edge by testing == Double.POSITIVE_INFINITY. MAX_VALUE
+        // is finite and NOT recognised as blocked, so GH traversed inaccessible
+        // edges at astronomical cost; path weights overflowed mid-search and the
+        // bidirectional search collapsed into ConnectionNotFoundException instead
+        // of cleanly detouring around the restricted road.
+        boolean accessible = reverse ? edge.getReverse(accessEnc) : edge.get(accessEnc);
+        if (!accessible) return Double.POSITIVE_INFINITY;
+
         double travelTimeSec = calcEdgeMillis(edge, reverse) / 1000.0;
         long   edgeId        = edge.getEdge();
         double riskScore     = edgeRiskScores.getOrDefault(edgeId, 0.0);

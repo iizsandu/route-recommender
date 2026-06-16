@@ -39,7 +39,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 
 from ml.data.category_mapping import FEMALE_WEIGHTS, KDE_ELIGIBLE
-from ml.train_kde import build_kde_pool, find_latest_snapshot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +73,7 @@ def load_kde_models(artifacts_dir: Path) -> dict:
 
 def load_crime_pool(snapshot_path: Path | None) -> pd.DataFrame:
     """Load and filter the Parquet snapshot to the KDE-eligible crime pool."""
+    from ml.train_kde import build_kde_pool, find_latest_snapshot  # noqa: PLC0415
     if snapshot_path is None:
         snapshot_path = find_latest_snapshot()
     log.info("Loading snapshot: %s", snapshot_path.name)
@@ -101,9 +101,21 @@ def load_gh_edges(gh_edges_path: Path) -> gpd.GeoDataFrame:
     Read gh_edges.csv produced by EdgeExporter.
     Columns: edge_id (int), length_m (float), geom_wkt (WKT LINESTRING lng lat).
     Returns a GeoDataFrame in EPSG:4326.
+
+    WHY not pd.read_csv: the geom_wkt field is an unquoted LINESTRING whose
+    coordinate pairs are comma-separated (e.g. "LINESTRING(77.1 28.1,77.2 28.2)").
+    pandas splits on every comma, producing too many columns. Splitting each line
+    on the first two commas only reconstructs the three-field structure correctly.
     """
     log.info("Loading GH edge geometries: %s", gh_edges_path)
-    df = pd.read_csv(gh_edges_path)
+    with open(gh_edges_path, encoding="utf-8") as f:
+        next(f)  # skip header: edge_id,length_m,geom_wkt
+        records = [line.split(",", 2) for line in f]
+
+    df = pd.DataFrame(records, columns=["edge_id", "length_m", "geom_wkt"])
+    df["geom_wkt"]  = df["geom_wkt"].str.rstrip("\n")
+    df["edge_id"]   = df["edge_id"].astype(int)
+    df["length_m"]  = df["length_m"].astype(float)
     log.info("  GH edges: %d", len(df))
 
     # geom_wkt is "LINESTRING(lng lat, ...)" — WKT standard (x=lng, y=lat).
@@ -214,6 +226,52 @@ def accumulate_scores(
     return dict(edge_raw_scores)
 
 
+# ── Step 5b: KDE-at-centroid (no snapshot needed) ────────────────────────────
+
+def score_edges_via_kde_surface(
+    edges_gdf: gpd.GeoDataFrame,
+    kde_models: dict,
+    batch_size: int = 50_000,
+) -> dict[int, float]:
+    """
+    Score each GH edge by evaluating the KDE crime-density surface at the
+    edge centroid. No crime snapshot parquet required.
+
+    WHY centroid approach: the KDE models already encode the full spatial
+    crime density surface — evaluating them at an edge centroid is equivalent
+    to asking "how dense is crime near this road segment?" without needing to
+    re-read the raw crime records. Suitable when a fresh snapshot isn't available.
+
+    WHY batched: scipy gaussian_kde.evaluate() is O(N×M) where N = training
+    points and M = query points. Processing 546K edges at once allocates a
+    ~4 GB matrix. Batches of 50K keep peak RAM under 400 MB.
+    """
+    centroids = edges_gdf.geometry.centroid  # GeoSeries of Points; .x=lng, .y=lat
+    lat_arr   = centroids.y.values
+    lng_arr   = centroids.x.values
+    points    = np.vstack([lat_arr, lng_arr])  # (2, n_edges) — KDE convention
+    n         = len(edges_gdf)
+
+    log.info("  lat [%.3f, %.3f]  lng [%.3f, %.3f]",
+             lat_arr.min(), lat_arr.max(), lng_arr.min(), lng_arr.max())
+
+    weighted = np.zeros(n, dtype=np.float64)
+    for cat, kde in kde_models.items():
+        w = FEMALE_WEIGHTS.get(cat, 0.5)
+        if w == 0:
+            continue
+        log.info("  %s (weight=%.1f) ...", cat, w)
+        cat_scores = np.empty(n, dtype=np.float64)
+        for start in range(0, n, batch_size):
+            end = min(start + batch_size, n)
+            cat_scores[start:end] = kde.evaluate(points[:, start:end])
+        weighted += w * cat_scores
+        log.info("    max density = %.4e", cat_scores.max())
+
+    edge_ids = edges_gdf["edge_id"].values.astype(int)
+    return {int(eid): float(s) for eid, s in zip(edge_ids, weighted)}
+
+
 # ── Step 6: P99 normalisation ─────────────────────────────────────────────────
 
 def normalise_scores(raw_scores: dict[int, float]) -> dict[int, float]:
@@ -307,6 +365,8 @@ def main() -> None:
     parser.add_argument("--snapshot", type=Path,
                         default=None,
                         help="Path to a specific crimes_*.parquet snapshot.")
+    parser.add_argument("--kde-only", action="store_true",
+                        help="Score edges by evaluating KDE at centroids — no snapshot needed.")
     args = parser.parse_args()
 
     if not args.gh_edges.exists():
@@ -317,29 +377,39 @@ def main() -> None:
 
     log.info("=== Stage 2: Edge Risk Pipeline ===")
 
-    log.info("[1/6] Loading KDE models from %s ...", args.artifacts_dir)
+    log.info("[1] Loading KDE models from %s ...", args.artifacts_dir)
     kde_models = load_kde_models(args.artifacts_dir)
 
-    log.info("[2/6] Loading crime snapshot ...")
-    pool = load_crime_pool(args.snapshot)
-    snap_path = args.snapshot or find_latest_snapshot()
-    _validate_versions(pool, kde_models, snap_path)
-
-    log.info("[3/6] Loading GH edge geometries ...")
+    log.info("[2] Loading GH edge geometries ...")
     edges_gdf = load_gh_edges(args.gh_edges)
 
-    log.info("[4/6] Spatial matching: crime points → GH edges (150m buffer) ...")
-    matched = match_crimes_to_edges(pool, edges_gdf)
+    if args.kde_only:
+        # ── KDE-at-centroid path (no parquet required) ────────────────────────
+        log.info("[3] Scoring edges via KDE surface at centroids (--kde-only) ...")
+        raw_scores = score_edges_via_kde_surface(edges_gdf, kde_models)
+        snap_path  = None
+        n_crimes   = 0
+    else:
+        # ── Full spatial-join path (requires crime snapshot parquet) ──────────
+        log.info("[3] Loading crime snapshot ...")
+        from ml.train_kde import find_latest_snapshot  # noqa: PLC0415
+        pool      = load_crime_pool(args.snapshot)
+        snap_path = args.snapshot or find_latest_snapshot()
+        _validate_versions(pool, kde_models, snap_path)
+        n_crimes  = len(pool)
 
-    log.info("[5/6] Accumulating risk scores ...")
-    raw_scores = accumulate_scores(matched, kde_models)
+        log.info("[4] Spatial matching: crime points → GH edges (150m buffer) ...")
+        matched = match_crimes_to_edges(pool, edges_gdf)
 
-    log.info("[6/6] Normalising (P99 clip) and writing output ...")
+        log.info("[5] Accumulating risk scores ...")
+        raw_scores = accumulate_scores(matched, kde_models)
+
+    log.info("[final] Normalising (P99 clip) and writing output ...")
     normalised = normalise_scores(raw_scores)
     write_output(
         normalised=normalised,
         n_edges_total=len(edges_gdf),
-        n_crime_points=len(pool),
+        n_crime_points=n_crimes,
         raw_scores=raw_scores,
         snapshot_path=snap_path,
         gh_edges_path=args.gh_edges,

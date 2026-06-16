@@ -70,3 +70,7 @@ class RouteResponse(BaseModel):
         "Nearby incidents represent historically reported crimes from news sources. "
         "This is not a prediction of future crime."
     )
+
+class AgentResponse(BaseModel):
+    transcript: str   # what Whisper heard the user say
+    response: str     # what the CrewAI agent answered

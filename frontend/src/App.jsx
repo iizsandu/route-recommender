@@ -5,6 +5,7 @@ import DisclaimerModal, { hasAcknowledged } from './components/DisclaimerModal'
 import RouteForm from './components/RouteForm'
 import RouteResults from './components/RouteResults'
 import MapView from './components/MapView'
+import VoiceAgent from './components/VoiceAgent'
 
 function ShieldIcon() {
   return (
@@ -129,7 +130,8 @@ export default function App() {
         </aside>
 
         {/* Map */}
-        <main className="flex-1 min-h-[400px] md:min-h-0">
+        <main className="flex-1 min-h-[400px] md:min-h-0 relative">
+          <VoiceAgent />
           <MapView
             routes={routes}
             selectedIdx={selectedIdx}

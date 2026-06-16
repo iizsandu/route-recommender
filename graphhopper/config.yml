@@ -7,6 +7,15 @@ graphhopper:
   # car_access encoded value, not by dropping highways at import time).
   import.osm.ignored_highways: []
 
+  # WHY: our CrimeWeighting factory looks up VehicleAccess.key("car") = "car_access"
+  # and VehicleSpeed.key("car") = "car_average_speed" from the EncodingManager.
+  # Without these two encoded values in the graph, checkProfilesConsistency throws
+  # "Cannot find EncodedValue 'car_access'" at startup.
+  # Adding them here tells GH to encode them from OSM tags during graph import.
+  # Both config-bootstrap.yml and this file must list the same set so the graph
+  # built by bootstrap can be loaded by the full config without a fingerprint mismatch.
+  graph.encoded_values: car_access, car_average_speed
+
   profiles:
     # GH 9.x removed the built-in "fastest" weighting name.
     # "custom" with an empty custom_model is equivalent: no speed/priority adjustments
@@ -16,19 +25,34 @@ graphhopper:
     # object gives a non-null CustomModel with all-default values.
     - name: fastest
       weighting: custom
-      custom_model: {}
+      custom_model:
+        speed:
+          - if: "true"
+            limit_to: 90
 
-    # crime_aware is our custom weighting registered in the patched DefaultWeightingFactory.
-    # No "vehicle" key — GH 9.1 rejects it and throws at startup.
+    # WHY weighting: custom (not crime_aware):
+    # GH 9.x enforces two mutually exclusive constraints that trap a non-custom weighting:
+    #   prepareImport (line 832): calls findVariablesForEncodedValuesString(profile.getCustomModel(), ...)
+    #                             for EVERY profile without null-checking — NPEs when custom_model is null.
+    #   checkProfilesConsistency (line 1082): throws if custom_model != null AND weighting != custom.
+    # Solution: use weighting=custom (satisfies line 1082) + empty custom_model (satisfies line 832).
+    # Our patched DefaultWeightingFactory detects the crime_aware.lambda hint inside the custom
+    # branch and returns a CrimeWeighting instead of the standard CustomWeighting.
     - name: balanced
-      weighting: crime_aware
+      weighting: custom
       crime_aware.lambda: 0.1
       crime_aware.edge_risk_path: /data/edge_risk.json
+      custom_model:
+        speed: []
+        priority: []
 
     - name: safest
-      weighting: crime_aware
+      weighting: custom
       crime_aware.lambda: 0.3
       crime_aware.edge_risk_path: /data/edge_risk.json
+      custom_model:
+        speed: []
+        priority: []
 
   # WHY empty lists: CH bakes weights into the graph at preprocessing time.
   # CrimeWeighting reads edge_risk.json at startup — if the JSON changes weekly,

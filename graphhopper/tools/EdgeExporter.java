@@ -3,22 +3,35 @@
  * Run after GraphHopper has built the graph cache (first startup).
  * The output CSV is used by ml/build_edge_risk.py to compute per-edge crime scores.
  *
- * Usage (inside the container):
- *   java -cp /app/graphhopper.jar com.graphhopper.tools.EdgeExporter \
- *        <graph-cache-dir> <output-csv-path>
+ * Usage:
+ *   java -cp "/app/graphhopper-tools.jar:/app/graphhopper.jar" \
+ *        com.graphhopper.tools.EdgeExporter \
+ *        <graph-cache-dir> <output-csv-path> <config.yml>
  *
  * Example:
- *   java -cp /app/graphhopper.jar com.graphhopper.tools.EdgeExporter \
- *        /graphhopper/graph-cache /data/gh_edges.csv
+ *   java -cp "/app/graphhopper-tools.jar:/app/graphhopper.jar" \
+ *        com.graphhopper.tools.EdgeExporter \
+ *        /graphhopper/graph-cache /data/gh_edges.csv /app/config-bootstrap.yml
+ *
+ * WHY the config argument: GH 9.x stores a profile fingerprint in the graph cache
+ * and validates it against the running config on every load(). Without a matching
+ * profile config, load() throws IllegalStateException. Passing the same config.yml
+ * that was used to build the graph makes the fingerprints match.
  */
 package com.graphhopper.tools;
 
 import com.graphhopper.GraphHopper;
+import com.graphhopper.application.GraphHopperServerConfiguration;
+import com.graphhopper.jackson.GraphHopperModule;
 import com.graphhopper.routing.util.AllEdgesIterator;
 import com.graphhopper.util.FetchMode;
 import com.graphhopper.util.PointList;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import java.io.BufferedWriter;
+import java.io.File;
 import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.util.Locale;
@@ -26,21 +39,32 @@ import java.util.Locale;
 public class EdgeExporter {
 
     public static void main(String[] args) throws Exception {
-        if (args.length < 2) {
-            System.err.println("Usage: EdgeExporter <graph-cache-dir> <output-csv-path>");
+        if (args.length < 3) {
+            System.err.println("Usage: EdgeExporter <graph-cache-dir> <output-csv-path> <config.yml>");
             System.exit(1);
         }
-        String graphDir = args[0];
-        String csvPath  = args[1];
+        String graphDir   = args[0];
+        String csvPath    = args[1];
+        String configPath = args[2];
 
         System.out.println("[EdgeExporter] Loading graph from: " + graphDir);
+        System.out.println("[EdgeExporter] Using config:       " + configPath);
 
-        // GraphHopper.load() reads the already-compiled binary graph from disk.
-        // It does NOT re-import the PBF — the graph cache must already exist.
-        // The EncodingManager is reconstructed from the StorableProperties file
-        // that GraphHopper wrote during the original import.
-        GraphHopper gh = new GraphHopper();
+        // WHY parse config file: GH 9.x validates profile fingerprints stored in the
+        // graph cache against the profile list in the running config. An empty profile
+        // list (the default when no config is provided) always mismatches. Loading the
+        // same config.yml used to build the graph produces matching fingerprints.
+        ObjectMapper mapper = new ObjectMapper(new YAMLFactory())
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .registerModule(new GraphHopperModule());
+        GraphHopperServerConfiguration serverCfg = mapper.readValue(
+                new File(configPath), GraphHopperServerConfiguration.class);
+
+        GraphHopper gh = new GraphHopper().init(serverCfg.getGraphHopperConfiguration());
+        // init() sets graphHopperLocation from config; override with the explicit arg
+        // so this tool works even if the config points to a different path.
         gh.setGraphHopperLocation(graphDir);
+
         boolean loaded = gh.load();
         if (!loaded) {
             System.err.println("[EdgeExporter] ERROR: Could not load graph from " + graphDir);

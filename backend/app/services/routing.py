@@ -188,10 +188,31 @@ async def get_routes(
             ),
         )
     except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:400]
+        logger.error(
+            "GraphHopper %d for profile=%s origin=%s dest=%s body=%s",
+            exc.response.status_code, profile, origin, dest, body,
+        )
+        # Extract GH's human-readable message field when present.
+        try:
+            import json as _json
+            gh_msg = _json.loads(body).get("message", body)
+        except Exception:
+            gh_msg = body
+
+        if exc.response.status_code == 400 and "Connection" in gh_msg:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No road connection found between these locations. "
+                    "This usually means one address is outside the Delhi NCT road network "
+                    "(e.g. inside a campus, park, or building with no mapped road access). "
+                    "Try a nearby landmark or main road instead."
+                ),
+            )
         raise HTTPException(
             status_code=502,
-            detail=f"GraphHopper returned {exc.response.status_code}: "
-                   f"{exc.response.text[:300]}",
+            detail=f"Routing service error ({exc.response.status_code}): {gh_msg}",
         )
 
     # ── Parse GH response ────────────────────────────────────────────────────

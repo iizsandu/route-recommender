@@ -81,17 +81,38 @@ public class DefaultWeightingFactory implements WeightingFactory {
 
         Weighting weighting = null;
 
-        // ── Original GH 9.1 cases (preserved verbatim) ───────────────────────
+        // ── Original GH 9.1 cases (preserved verbatim, with crime_aware intercept) ──
         if (CustomWeighting.NAME.equalsIgnoreCase(weightingStr)) {
-            final CustomModel queryCustomModel = requestHints.getObject(CustomModel.KEY, null);
-            final CustomModel mergedCustomModel = CustomModel.merge(
-                profile.getCustomModel(), queryCustomModel);
-            if (requestHints.has(Parameters.Routing.HEADING_PENALTY))
-                mergedCustomModel.setHeadingPenalty(requestHints.getDouble(
-                    Parameters.Routing.HEADING_PENALTY,
-                    Parameters.Routing.DEFAULT_HEADING_PENALTY));
-            weighting = CustomModelParser.createWeighting(
-                encodingManager, turnCostProvider, mergedCustomModel);
+            // ── PATCH: crime-aware intercept ──────────────────────────────────────
+            // GH 9.x forces two mutually-exclusive constraints on non-custom weightings:
+            //   prepareImport (line 832) NPEs when profile.getCustomModel() is null.
+            //   checkProfilesConsistency (line 1082) rejects non-null custom_model with non-custom weighting.
+            // Workaround: crime profiles use weighting=custom + crime_aware.lambda hint.
+            // This branch intercepts the hint, ignores the custom_model, and returns CrimeWeighting.
+            if (hints.has("crime_aware.lambda")) {
+                BooleanEncodedValue accessEnc = encodingManager.getBooleanEncodedValue(
+                    VehicleAccess.key("car"));
+                DecimalEncodedValue speedEnc = encodingManager.getDecimalEncodedValue(
+                    VehicleSpeed.key("car"));
+                double lambda    = hints.getDouble("crime_aware.lambda", 0.1);
+                String riskPath  = hints.getString(
+                    "crime_aware.edge_risk_path", "/data/edge_risk.json");
+                CrimeWeighting w = new CrimeWeighting(
+                    accessEnc, speedEnc, turnCostProvider, lambda, riskPath);
+                w.validateMatchRate(graph.getAllEdges(), 0.10);
+                weighting = w;
+            } else {
+                // ── End patch; normal custom model path ───────────────────────────
+                final CustomModel queryCustomModel = requestHints.getObject(CustomModel.KEY, null);
+                final CustomModel mergedCustomModel = CustomModel.merge(
+                    profile.getCustomModel(), queryCustomModel);
+                if (requestHints.has(Parameters.Routing.HEADING_PENALTY))
+                    mergedCustomModel.setHeadingPenalty(requestHints.getDouble(
+                        Parameters.Routing.HEADING_PENALTY,
+                        Parameters.Routing.DEFAULT_HEADING_PENALTY));
+                weighting = CustomModelParser.createWeighting(
+                    encodingManager, turnCostProvider, mergedCustomModel);
+            }
 
         } else if ("shortest".equalsIgnoreCase(weightingStr)) {
             throw new IllegalArgumentException(
@@ -110,26 +131,7 @@ public class DefaultWeightingFactory implements WeightingFactory {
                 "Instead of weighting=short_fastest use weighting=custom "
                 + "with a distance_influence");
 
-        // ── PATCH: crime-aware weighting ──────────────────────────────────────
-        // Added for Phase 7 crime-aware routing. Uses the car vehicle's access and
-        // speed encoded values. profile.hasTurnCosts() is false for our profiles
-        // (no "turn_costs: true" in config.yml), so turnCostProvider is NO_TURN_COST_PROVIDER.
-        } else if ("crime_aware".equalsIgnoreCase(weightingStr)) {
-            BooleanEncodedValue accessEnc = encodingManager.getBooleanEncodedValue(
-                VehicleAccess.key("car"));
-            DecimalEncodedValue speedEnc = encodingManager.getDecimalEncodedValue(
-                VehicleSpeed.key("car"));
-            double lambda    = hints.getDouble("crime_aware.lambda", 0.1);
-            String riskPath  = hints.getString(
-                "crime_aware.edge_risk_path", "/data/edge_risk.json");
-            CrimeWeighting w = new CrimeWeighting(
-                accessEnc, speedEnc, turnCostProvider, lambda, riskPath);
-            // Non-fatal match-rate check: logs a warning if < 10% of edges have a
-            // crime score, which indicates edge_risk.json is stale or missing.
-            w.validateMatchRate(graph.getAllEdges(), 0.10);
-            weighting = w;
         }
-        // ── End patch ─────────────────────────────────────────────────────────
 
         if (weighting == null)
             throw new IllegalArgumentException(

@@ -33,6 +33,9 @@ from app.routers import search as search_router
 from app.routers import geocode as geocode_router
 from app.services.risk_model import load_model, load_lightgbm_models, reload_from_registry
 from app.services import retrieval_service
+from app.routers import agent as agent_router
+from app.services import whisper_service, agent_service
+
 
 settings = Settings()
 
@@ -132,6 +135,21 @@ async def lifespan(_app: FastAPI):
         bm25_model_path=bm25_path,
     )
 
+    # Initialise voice AI agent (Whisper + CrewAI).
+    # WHY non-fatal: if Ollama is unreachable or model not pulled,
+    # _ready stays False and /agent/query returns 503 — rest of app unaffected.
+    whisper_service.init(
+        model_size=settings.WHISPER_MODEL_SIZE,
+        device=settings.WHISPER_DEVICE,
+    )
+    agent_service.init(
+        provider=settings.LLM_PROVIDER,
+        ollama_url=settings.OLLAMA_BASE_URL,
+        ollama_model=settings.OLLAMA_MODEL,
+        anthropic_key=settings.ANTHROPIC_API_KEY,
+        agent_model=settings.AGENT_MODEL,
+    )
+
     # ── GraphHopper health check ──────────────────────────────────────────────
     # Tries up to 3 times (10s apart) so transient startup delays don't trigger
     # a warning. Logs WARNING (not error) — the backend still starts; routing
@@ -217,6 +235,8 @@ def create_app() -> FastAPI:
     app.include_router(risk_router.router)
     app.include_router(search_router.router)
     app.include_router(geocode_router.router)
+    app.include_router(agent_router.router)
+
 
 
     Instrumentator().instrument(app).expose(app)
