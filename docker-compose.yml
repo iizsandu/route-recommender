@@ -44,6 +44,16 @@ services:
     # keeping secrets out of the image layers
     env_file:
       - .env
+    volumes:
+      # WHY: mount live source over the baked-in copy so edits to backend/app/**
+      # are visible inside the container immediately, without rebuilding the image.
+      # Mirrors how the frontend already uses a volume mount for Vite HMR.
+      # Only app/ is mounted — installed packages and ML artifacts in the image are unaffected.
+      - ./backend/app:/repo/backend/app
+    # WHY --reload: uvicorn watches /repo/backend/app for file changes and restarts
+    # automatically. Without this, the volume mount updates files but the running
+    # process never re-imports them.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/backend/app
     depends_on:
       qdrant:
         condition: service_started

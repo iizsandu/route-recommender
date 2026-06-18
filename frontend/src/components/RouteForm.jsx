@@ -33,32 +33,10 @@ function ArrowIcon({ size = 14 }) {
   )
 }
 
-const PROFILES = [
-  {
-    id: 'fastest',
-    label: 'Fastest',
-    description: 'Shortest travel time, no crime weighting',
-    color: 'slate',
-  },
-  {
-    id: 'balanced',
-    label: 'Balanced',
-    description: 'Moderate crime avoidance (~1.7 min extra per high-risk km)',
-    color: 'indigo',
-  },
-  {
-    id: 'safest',
-    label: 'Safest',
-    description: 'Strong crime avoidance (~5 min extra per high-risk km)',
-    color: 'emerald',
-  },
-]
-
 export default function RouteForm({ onSubmit, onPinLocations, loading }) {
   const [origin, setOrigin]           = useState('')
   const [destination, setDestination] = useState('')
   const [departTime, setDepartTime]   = useState(new Date().toISOString())
-  const [profile, setProfile]         = useState('balanced')
   const [pinning, setPinning]         = useState(false)
   const [pinError, setPinError]       = useState(null)
 
@@ -69,7 +47,6 @@ export default function RouteForm({ onSubmit, onPinLocations, loading }) {
       origin: origin.trim(),
       destination: destination.trim(),
       depart_time: departTime,
-      profile,
     })
   }
 
@@ -157,38 +134,6 @@ export default function RouteForm({ onSubmit, onPinLocations, loading }) {
           Departure time
         </p>
         <TimeOfDayPicker value={departTime} onChange={setDepartTime} />
-      </div>
-
-      {/* Route type selector */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm px-4 py-3.5">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2.5">
-          Route type
-        </p>
-        <div className="flex gap-2">
-          {PROFILES.map(p => {
-            const active = profile === p.id
-            const colors = {
-              slate:   active ? 'bg-slate-600 text-white border-slate-600'   : 'border-slate-200 text-slate-500 hover:border-slate-400',
-              indigo:  active ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-500 hover:border-indigo-400',
-              emerald: active ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-200 text-slate-500 hover:border-emerald-400',
-            }
-            return (
-              <button
-                key={p.id}
-                type="button"
-                title={p.description}
-                onClick={() => setProfile(p.id)}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all duration-150 ${colors[p.color]}`}
-              >
-                {p.label}
-              </button>
-            )
-          })}
-        </div>
-        {/* Description of the currently selected profile */}
-        <p className="mt-2 text-xs text-slate-400 leading-snug">
-          {PROFILES.find(p => p.id === profile)?.description}
-        </p>
       </div>
 
       {/* Secondary action — pin on map */}

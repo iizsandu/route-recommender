@@ -5,6 +5,7 @@ import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
+    PayloadSchemaType,
     PointStruct,
     SparseIndexParams,
     SparseVectorParams,
@@ -60,6 +61,13 @@ def create_collection(
         },
     )
     logger.info("Created collection %s", collection_name)
+
+    # WHY: range filters on lat/lng require a numeric payload index in Qdrant.
+    # Without this, geo bounding-box queries return 400 "Index required but not found".
+    client.create_payload_index(collection_name, "lat", PayloadSchemaType.FLOAT)
+    client.create_payload_index(collection_name, "lng", PayloadSchemaType.FLOAT)
+    client.create_payload_index(collection_name, "crime_macro", PayloadSchemaType.KEYWORD)
+    logger.info("Created payload indexes for lat/lng/crime_macro on %s", collection_name)
 
 
 def upsert_batch(

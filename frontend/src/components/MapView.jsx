@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 import Map, { Source, Layer, NavigationControl, GeolocateControl, Marker, Popup } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-const BAND_COLOR = {
-  Low:    '#22c55e',
-  Medium: '#f59e0b',
-  High:   '#ef4444',
+const ROUTE_TYPE_COLOR = {
+  safest:   '#22c55e',   // green  — matches RouteLegend
+  balanced: '#f59e0b',   // amber
+  fastest:  '#ef4444',   // red
 }
 
 const MACRO_COLOR = {
@@ -132,7 +132,7 @@ function fmtPopupDate(dateStr) {
   return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
 }
 
-function IncidentPopupCard({ inc, onClose }) {
+function IncidentPopupCard({ inc, onClose, onGetDetails }) {
   const sev     = getSeverityConfig(inc.crime_macro)
   const date    = fmtPopupDate(inc.crime_date)
   const summary = inc.summary?.length > 200
@@ -219,27 +219,187 @@ function IncidentPopupCard({ inc, onClose }) {
         </div>
       </div>
 
-      {/* ── CTA button ──────────────────────────────────────────── */}
-      {inc.url ? (
-        <a
-          href={inc.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1.5 w-full py-2.5 text-xs font-semibold border-t border-gray-100 hover:bg-gray-50 transition-colors"
-          style={{ color: sev.color }}
-          onClick={e => e.stopPropagation()}
+      {/* ── Footer: Get details | View report ───────────────────── */}
+      <div className="border-t border-gray-100 flex">
+        {/* Get details — opens the full detail panel */}
+        <button
+          onClick={e => { e.stopPropagation(); onGetDetails && onGetDetails(inc) }}
+          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors border-r border-gray-100"
         >
-          View Full Report
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          Get details
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
           </svg>
-        </a>
-      ) : (
-        <div className="border-t border-gray-100 py-2 px-3">
-          <p className="text-xs text-gray-300 text-center">No source available</p>
-        </div>
-      )}
+        </button>
+        {/* View source link — conditional on URL availability */}
+        {inc.url ? (
+          <a
+            href={inc.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold hover:bg-gray-50 transition-colors"
+            style={{ color: sev.color }}
+            onClick={e => e.stopPropagation()}
+          >
+            View report
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </a>
+        ) : (
+          <div className="flex-1 flex items-center justify-center py-2.5">
+            <p className="text-xs text-gray-300">No source</p>
+          </div>
+        )}
+      </div>
     </div>
+  )
+}
+
+// Full-screen slide-in panel — covers the right 40% of the viewport.
+// The left 60% is blurred and acts as a click-to-close backdrop.
+function CrimeDetailPanel({ inc, onClose }) {
+  const sev = getSeverityConfig(inc.crime_macro)
+
+  function safeDate(dateStr) {
+    if (!dateStr) return null
+    const d = new Date(dateStr)
+    if (isNaN(d)) return null
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+  }
+
+  return (
+    <>
+      <style>{`
+        @keyframes slideInRight {
+          from { transform: translateX(100%); }
+          to   { transform: translateX(0); }
+        }
+        .cdp-slide { animation: slideInRight 0.22s cubic-bezier(0.22,1,0.36,1); }
+      `}</style>
+
+      {/* Full-screen container — click the blurred area to close */}
+      <div className="fixed inset-0 z-[200] flex" onClick={onClose}>
+
+        {/* Blurred backdrop (left 60%) */}
+        <div className="flex-1 backdrop-blur-[3px] bg-black/20" />
+
+        {/* Detail panel (right 40%) — stopPropagation prevents backdrop close */}
+        <div
+          className="cdp-slide w-[40%] min-w-[320px] bg-white h-full shadow-2xl flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* ── Header ─────────────────────────────────────────────────── */}
+          <div
+            className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0"
+            style={{ backgroundColor: sev.bg }}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ backgroundColor: sev.color }}
+              >
+                {getCrimeIcon(inc.crime_macro)}
+              </div>
+              <div>
+                <h2 className="font-bold text-gray-900 text-base leading-tight">{inc.crime_macro}</h2>
+                <span className={`text-[10px] font-bold uppercase tracking-widest ${sev.textColor}`}>
+                  {sev.label}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/10 transition-colors flex-shrink-0"
+              aria-label="Close"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="1" y1="1" x2="13" y2="13" />
+                <line x1="13" y1="1" x2="1" y2="13" />
+              </svg>
+            </button>
+          </div>
+
+          {/* ── Body (scrollable) ───────────────────────────────────────── */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+            {inc.crime_type && inc.crime_type !== inc.crime_macro && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Crime Type</p>
+                <p className="text-sm text-gray-800">{inc.crime_type}</p>
+              </div>
+            )}
+
+            {safeDate(inc.crime_date) && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Date</p>
+                <p className="text-sm text-gray-800">{safeDate(inc.crime_date)}</p>
+              </div>
+            )}
+
+            {inc.location_exact && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Location</p>
+                <p className="text-sm text-gray-800">{inc.location_exact}</p>
+              </div>
+            )}
+
+            {inc.victim && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Victim</p>
+                <p className="text-sm text-gray-800">{inc.victim}</p>
+              </div>
+            )}
+
+            {inc.weapon_used && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Weapon Used</p>
+                <p className="text-sm text-gray-800">{inc.weapon_used}</p>
+              </div>
+            )}
+
+            {inc.summary && (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Summary</p>
+                <p className="text-sm text-gray-700 leading-relaxed">{inc.summary}</p>
+              </div>
+            )}
+
+            {/* Fallback when record has no details beyond the category */}
+            {!inc.crime_type && !inc.crime_date && !inc.location_exact &&
+             !inc.victim && !inc.weapon_used && !inc.summary && (
+              <p className="text-sm text-gray-400 italic">
+                No additional details available for this record.
+              </p>
+            )}
+          </div>
+
+          {/* ── Footer — source link ────────────────────────────────────── */}
+          <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0">
+            {inc.url ? (
+              <a
+                href={inc.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: sev.color }}
+                onClick={e => e.stopPropagation()}
+              >
+                View Full Report
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <polyline points="12 5 19 12 12 19" />
+                </svg>
+              </a>
+            ) : (
+              <p className="text-sm text-gray-400 text-center">No source article available</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -405,6 +565,21 @@ function RouteLegend() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+// MapLibre match expression — colors individual crime dots by crime_macro.
+// Must be a plain array (MapLibre spec), not a JS object.
+const CRIME_COLOR_EXPR = [
+  'match', ['get', 'crime_macro'],
+  'Sexual Violence',    '#dc2626',
+  'Kidnapping',         '#ea580c',
+  'Robbery',            '#d97706',
+  'Assault',            '#ca8a04',
+  'Murder',             '#7c3aed',
+  'Terrorism / Riot',   '#991b1b',
+  'Theft / Burglary',   '#6b7280',
+  'Drug / Trafficking', '#9ca3af',
+  '#6b7280',  // default
+]
+
 export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocations, personalisedIncidents = null }) {
   const mapRef = useRef(null)
   const [showHeatmap, setShowHeatmap]       = useState(true)
@@ -412,6 +587,15 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
   const [activeGeneralPopup, setActiveGeneralPopup]           = useState(null)
   const [activePersonalisedPopup, setActivePersonalisedPopup] = useState(null)
   const [mapReady, setMapReady]             = useState(false)
+
+  // All-crimes layer state
+  const [showAllCrimes, setShowAllCrimes]       = useState(false)
+  const [allCrimesData, setAllCrimesData]       = useState(null)   // GeoJSON once fetched
+  const [allCrimesLoading, setAllCrimesLoading] = useState(false)
+  const [activeCrimePopup, setActiveCrimePopup] = useState(null)   // {lat, lng, inc}
+
+  // Crime detail panel — full slide-in panel triggered by "Get details" in any popup
+  const [crimeDetailInc, setCrimeDetailInc] = useState(null)
 
   const activeCat = CATEGORIES.find(c => c.id === activeCategory)
 
@@ -434,7 +618,82 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
     map.setPaintProperty('heatmap-raster-layer', 'raster-opacity', showHeatmap ? HEATMAP_OPACITY : 0)
   }, [showHeatmap, mapReady])
 
-  useEffect(() => { setActiveGeneralPopup(null); setActivePersonalisedPopup(null) }, [selectedIdx])
+  useEffect(() => {
+    setActiveGeneralPopup(null)
+    setActivePersonalisedPopup(null)
+    // WHY: activeCrimePopup is independent of route selection — it belongs to the
+    // all-crimes layer which is not tied to any particular route. Clearing it here
+    // caused the popup to vanish immediately whenever a route click fired nearby.
+  }, [selectedIdx])
+
+  async function handleToggleAllCrimes() {
+    const next = !showAllCrimes
+    setShowAllCrimes(next)
+    if (next && !allCrimesData) {
+      setAllCrimesLoading(true)
+      try {
+        const res = await fetch(`${BASE_URL}/risk/crimes-geojson`)
+        const data = await res.json()
+        setAllCrimesData(data)
+      } catch (e) {
+        console.error('Failed to load crimes GeoJSON', e)
+      } finally {
+        setAllCrimesLoading(false)
+      }
+    }
+  }
+
+  // Single map-level click handler for all interactive layers.
+  // WHY centralised: react-map-gl v7 only populates e.features when the clicked
+  // layer is listed in interactiveLayerIds on <Map>. onClick on individual <Layer>
+  // components does NOT receive e.features — the handler would always exit early
+  // at the `if (!feature) return` guard. Centralising here is the correct pattern.
+  function handleMapClick(e) {
+    const feature = e.features?.[0]
+    if (!feature) return
+
+    const lid = feature.layer.id
+
+    // Route hit area — extract index from id pattern "route-{i}-hit"
+    if (lid.endsWith('-hit')) {
+      const idx = parseInt(lid.split('-')[1], 10)
+      onSelectRoute(idx)
+      return
+    }
+
+    // Cluster bubble — zoom in to expand
+    if (lid === 'all-crimes-clusters') {
+      const map = mapRef.current.getMap()
+      const src = map.getSource('all-crimes-src')
+      src.getClusterExpansionZoom(feature.properties.cluster_id, (err, zoom) => {
+        if (err) return
+        map.easeTo({ center: feature.geometry.coordinates, zoom: zoom + 0.5, duration: 400 })
+      })
+      return
+    }
+
+    // Individual crime dot — show popup card
+    if (lid === 'all-crimes-unclustered') {
+      const p = feature.properties
+      setActiveCrimePopup({
+        lat: feature.geometry.coordinates[1],
+        lng: feature.geometry.coordinates[0],
+        inc: {
+          crime_macro:    p.crime_macro    || null,
+          crime_type:     p.crime_type     || null,
+          crime_date:     p.crime_date     || null,
+          summary:        '',
+          url:            p.url            || '',
+          location_exact: p.location_exact || null,
+          victim:         p.victim         || null,
+          weapon_used:    p.weapon_used    || null,
+          rrf_score:      0,
+        },
+      })
+      setActiveGeneralPopup(null)
+      setActivePersonalisedPopup(null)
+    }
+  }
 
   useEffect(() => {
     if (!mapRef.current || !pinLocations?.origin || !pinLocations?.destination) return
@@ -471,6 +730,15 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
         style={{ width: '100%', height: '100%' }}
         mapStyle={MAP_STYLE}
         onLoad={handleMapLoad}
+        onClick={handleMapClick}
+        interactiveLayerIds={[
+          // Route hit areas — one per route, always registered when routes exist
+          ...routes.map((_, i) => `route-${i}-hit`),
+          // All-crimes layers — only when the overlay is visible and data is loaded
+          ...(showAllCrimes && allCrimesData
+            ? ['all-crimes-clusters', 'all-crimes-unclustered']
+            : []),
+        ]}
       >
         <NavigationControl position="top-right" />
         <GeolocateControl position="top-right" />
@@ -486,14 +754,13 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
                 id={`route-${i}-hit`}
                 type="line"
                 paint={{ 'line-width': 24, 'line-opacity': 0 }}
-                onClick={() => onSelectRoute(i)}
               />
               {/* Halo effect — wider blurred layer under the selected route */}
               <Layer
                 id={`route-${i}-halo`}
                 type="line"
                 paint={{
-                  'line-color':   BAND_COLOR[route.risk_band],
+                  'line-color':   ROUTE_TYPE_COLOR[route.route_type] ?? '#6b7280',
                   'line-width':   isSelected ? 20 : 0,
                   'line-opacity': isSelected ? 0.18 : 0,
                   'line-blur':    10,
@@ -504,7 +771,7 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
                 id={`route-${i}-line`}
                 type="line"
                 paint={{
-                  'line-color':   BAND_COLOR[route.risk_band],
+                  'line-color':   ROUTE_TYPE_COLOR[route.route_type] ?? '#6b7280',
                   'line-width':   isSelected ? 7 : 2.5,
                   'line-opacity': isSelected ? 1 : 0.35,
                 }}
@@ -585,6 +852,7 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
             <IncidentPopupCard
               inc={generalIncidents[activeGeneralPopup]}
               onClose={() => setActiveGeneralPopup(null)}
+              onGetDetails={inc => { setCrimeDetailInc(inc); setActiveGeneralPopup(null) }}
             />
           </Popup>
         )}
@@ -605,6 +873,75 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
             <IncidentPopupCard
               inc={personalisedDots[activePersonalisedPopup]}
               onClose={() => setActivePersonalisedPopup(null)}
+              onGetDetails={inc => { setCrimeDetailInc(inc); setActivePersonalisedPopup(null) }}
+            />
+          </Popup>
+        )}
+
+        {/* ── All-crimes cluster layer ──────────────────────────────────── */}
+        {showAllCrimes && allCrimesData && (
+          <Source
+            id="all-crimes-src"
+            type="geojson"
+            data={allCrimesData}
+            cluster={true}
+            clusterMaxZoom={14}
+            clusterRadius={40}
+          >
+            {/* Cluster bubbles */}
+            <Layer
+              id="all-crimes-clusters"
+              type="circle"
+              filter={['has', 'point_count']}
+              paint={{
+                'circle-color': ['step', ['get', 'point_count'], '#f59e0b', 100, '#ef4444', 500, '#7c3aed'],
+                'circle-radius': ['step', ['get', 'point_count'], 16, 100, 22, 500, 30],
+                'circle-opacity': 0.85,
+                'circle-stroke-width': 2,
+                'circle-stroke-color': 'white',
+              }}
+            />
+            {/* Cluster count label */}
+            <Layer
+              id="all-crimes-cluster-count"
+              type="symbol"
+              filter={['has', 'point_count']}
+              layout={{ 'text-field': '{point_count_abbreviated}', 'text-size': 11 }}
+              paint={{ 'text-color': 'white' }}
+            />
+            {/* Individual crime dots */}
+            <Layer
+              id="all-crimes-unclustered"
+              type="circle"
+              filter={['!', ['has', 'point_count']]}
+              paint={{
+                'circle-color':        CRIME_COLOR_EXPR,
+                'circle-radius':       5,
+                'circle-opacity':      0.85,
+                'circle-stroke-width': 1.5,
+                'circle-stroke-color': 'white',
+              }}
+            />
+          </Source>
+        )}
+
+        {/* ── All-crimes dot popup ──────────────────────────────────────── */}
+        {activeCrimePopup && (
+          <Popup
+            latitude={activeCrimePopup.lat}
+            longitude={activeCrimePopup.lng}
+            anchor="bottom"
+            offset={14}
+            onClose={() => setActiveCrimePopup(null)}
+            closeButton={false}
+            closeOnClick={false}
+            maxWidth="340px"
+            className="crime-popup"
+          >
+            <IncidentPopupCard
+              inc={activeCrimePopup.inc}
+              onClose={() => setActiveCrimePopup(null)}
+              onGetDetails={inc => { setCrimeDetailInc(inc); setActiveCrimePopup(null) }}
             />
           </Popup>
         )}
@@ -624,13 +961,31 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
 
       {/* ── Heatmap floating card (top-left) ─────────────────────────────── */}
       {mapReady && (
-        <div className="absolute top-4 left-4 z-10">
+        <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
           <HeatmapControl
             showHeatmap={showHeatmap}
             onToggle={() => setShowHeatmap(v => !v)}
             activeCategory={activeCategory}
             onCategoryChange={setActiveCategory}
           />
+          {/* All-crimes toggle */}
+          <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+            <button
+              onClick={handleToggleAllCrimes}
+              disabled={allCrimesLoading}
+              className="flex items-center justify-between gap-3 w-full px-4 py-3 hover:bg-slate-50 transition-colors duration-150 disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 transition-colors duration-200 ${showAllCrimes ? 'bg-rose-500' : 'bg-slate-300'}`} />
+                <span className={`text-sm font-medium transition-colors duration-200 ${showAllCrimes ? 'text-slate-800' : 'text-slate-400'}`}>
+                  {allCrimesLoading ? 'Loading…' : 'All Crime Points'}
+                </span>
+              </div>
+              <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0 ${showAllCrimes ? 'bg-rose-500' : 'bg-slate-200'}`}>
+                <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${showAllCrimes ? 'translate-x-[17px]' : 'translate-x-0.5'}`} />
+              </div>
+            </button>
+          </div>
         </div>
       )}
 
@@ -646,6 +1001,15 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
         <div className="absolute bottom-6 right-4 z-10">
           <RouteLegend />
         </div>
+      )}
+
+      {/* ── Crime detail panel ───────────────────────────────────────────── */}
+      {/* Rendered outside <Map> so it sits above MapLibre's canvas and controls */}
+      {crimeDetailInc && (
+        <CrimeDetailPanel
+          inc={crimeDetailInc}
+          onClose={() => setCrimeDetailInc(null)}
+        />
       )}
     </div>
   )

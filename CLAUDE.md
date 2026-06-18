@@ -43,11 +43,14 @@ for routing.
 **Current state:** Fully functional app deployed to production. Routes, risk
 heatmap (per-category KDE PNGs), nearby incidents (Qdrant hybrid search +
 BM25), personalised incidents (semantic questionnaire → situation-aware
-retrieval), and A/B map pins all working end-to-end. 8,797 crime records
-ingested from Cosmos DB; 4,655 in KDE pool across 8 categories; 6,775
-indexed in Qdrant Cloud. Geocoding uses Mappls primary + Nominatim fallback
-(ORS Pelias removed). All Phase 0–6 work complete. Production fully
-operational on Azure Container Apps + Vercel.
+retrieval), A/B map pins, GraphHopper crime-weighted routing (3 profiles:
+fastest / balanced / safest), and a voice AI agent (Whisper STR + Ollama
+LLM) all working end-to-end. 8,797 crime records ingested from Cosmos DB;
+4,655 in KDE pool across 8 categories; 4,989 indexed for the All Crime
+Points map layer (797 placeholder-coordinate records filtered out).
+Geocoding uses Mappls primary + Nominatim fallback (ORS Pelias removed).
+All Phase 0–8 work complete. Production fully operational on Azure Container
+Apps + Vercel.
 
 **Tech Stack:** Python 3.11+, FastAPI, React 18 + Vite, MapLibre GL JS,
 OpenRouteService API, KDE risk model (scipy), MLflow, Azure Container Apps,
@@ -412,7 +415,7 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 
 ## Active Sprint — Phase 5: Productionisation
 
-> **Status as of 2026-05-26:**
+> **Status as of 2026-06-18:**
 > - Phase 0 (Bootstrap) ✅ complete
 > - Phase 1 (Risk Surface MVP) ✅ complete
 > - Phase 2 (Frontend MVP) ✅ complete
@@ -421,6 +424,7 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 > - Phase 5 (Productionisation) ✅ complete
 > - Phase 6 (Retrieval + UX Polish) ✅ complete — Qdrant hybrid search, per-category heatmaps, Mappls geocoding, A/B pins
 > - Phase 7 (Personalised Incidents + Qdrant Cloud production) ✅ complete — questionnaire UI, situation-aware retrieval, dual-dot map rendering, Qdrant Cloud deployed
+> - Phase 8 (GraphHopper + Voice AI + Bug Fixes) ✅ complete — crime-weighted GH routing, voice agent (Whisper + Ollama), All Crime Points popup fix, placeholder coordinate filter, backend live-reload volume mount
 
 ### Current Task
 
@@ -452,6 +456,17 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 - **Re-index after model retrain:** if BM25 corpus changes (new crime records),
   re-run `python scripts/build_index.py --rebuild --qdrant-url <URL> --qdrant-api-key <KEY>`
   then rebuild and push the Docker image (bm25_model.pkl is baked in).
+- **Backend live code reload (local dev):** `docker-compose.yml` mounts
+  `./backend/app` over `/repo/backend/app` and runs uvicorn with `--reload`.
+  Editing any file under `backend/app/` is reflected in the running container
+  within ~1–2 seconds — no image rebuild needed. To apply the mount after
+  pulling a fresh clone: `docker compose up -d --no-deps backend` (recreates
+  the container; does NOT rebuild the image). **Production is unaffected** —
+  Azure Container Apps runs the built image, not a volume-mounted copy.
+- **`_CRIMES_GEOJSON_CACHE` is process-lifetime:** `GET /risk/crimes-geojson`
+  builds and caches the All Crime Points GeoJSON once per process start. If
+  you change `_build_crimes_geojson()` and have the volume mount active,
+  uvicorn's reload restarts the process and the cache is rebuilt automatically.
 
 ---
 
@@ -847,6 +862,122 @@ VITE_SENTRY_DSN=                        # empty = Sentry disabled; set in Vercel
 ## Sprint Completed Log
 
 > Move tasks here when fully implemented + tested + deployed.
+
+### Phase 8 — Bug fixes, data quality, dev ergonomics (2026-06-18)
+
+**All Crime Points — popup not showing on click (permanent architectural fix)**
+- Root cause 1: `interactiveLayerIds` was not set on `<Map>` in react-map-gl v7.
+  Without it, `e.features` is always empty on `<Layer onClick>` — the handler
+  exits at the `if (!feature) return` guard every time.
+- Root cause 2: the `selectedIdx` `useEffect` was clearing `activeCrimePopup`
+  unconditionally, so any nearby route-line click silently dismissed the popup.
+- Fix — `frontend/src/components/MapView.jsx`:
+  - All layer click handling consolidated into a single `handleMapClick(e)`
+    function that dispatches by `feature.layer.id`. Route hits, cluster
+    zoom-expand, and unclustered dot popup all handled here.
+  - `interactiveLayerIds` added to `<Map>`: includes `route-{i}-hit` layers
+    always, plus `all-crimes-clusters` and `all-crimes-unclustered` only when
+    the All Crime Points overlay is visible and data is loaded.
+  - `selectedIdx` useEffect only clears `activeGeneralPopup` and
+    `activePersonalisedPopup` — does NOT clear `activeCrimePopup`.
+  - `onClick` removed from all individual `<Layer>` components (was dead code
+    since `e.features` was always empty there).
+
+**Placeholder coordinate filter — `_build_crimes_geojson()` (2026-06-18)**
+- Problem: 797 of 8,797 crime records were assigned Delhi centre
+  `(28.6139, 77.2090)` as a fallback coordinate during LLM extraction when the
+  true location was unknown. On the map these formed a misleading cluster
+  labelled "806" that dissolved to only 2 visible dots when zoomed past
+  `clusterMaxZoom=14`.
+- Fix — `backend/app/routers/risk.py`, `_build_crimes_geojson()`:
+  - Parquet path: after Delhi-NCR bounds filter, groups by `(lat, lng)` and
+    drops any pair where more than 20 records share the exact same coordinate.
+  - Qdrant scroll fallback path: identical threshold applied via `Counter`.
+  - Threshold of 20 is above any realistic crime density at one precise point
+    (genuine hotspots top out at ~10–15); well below the 797-record cluster.
+  - Result: `GET /risk/crimes-geojson` now returns 4,989 features (down from
+    6,775 when using Qdrant scroll or when the filter was absent).
+- **Important:** `_CRIMES_GEOJSON_CACHE` is module-level (process lifetime).
+  The fix only takes effect after the backend process restarts. With the new
+  volume-mount setup, uvicorn's `--reload` handles this automatically on save.
+
+**Qdrant Cloud `crime_macro` keyword index (2026-06-17)**
+- Problem: hybrid search returned HTTP 400 "Index required" errors on filtered
+  queries because `crime_macro` had no payload index in the Qdrant Cloud
+  collection.
+- Fix — `retrieval/qdrant_store.py`, `create_collection()`:
+  Added `client.create_payload_index(collection_name, "crime_macro", PayloadSchemaType.KEYWORD)`
+  alongside the existing `lat`/`lng` float indexes. Future `--rebuild` runs
+  create all three indexes automatically.
+- The running Qdrant Cloud collection was patched by calling
+  `create_payload_index` directly (one-time manual step via Docker exec).
+
+**Backend live-reload volume mount (2026-06-18)**
+- `docker-compose.yml` — backend service now mounts `./backend/app:/repo/backend/app`
+  and overrides the Dockerfile CMD with
+  `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /repo/backend/app`.
+  Editing any `backend/app/**` file is reflected in the running container in
+  ~1–2 seconds without rebuilding the image.
+- Only `app/` is mounted — installed packages (`/repo/backend/.venv`) and
+  ML artifacts (`/repo/ml/artifacts/`) in the image layers are unaffected.
+- Production (Azure Container Apps) uses the built image and is unaffected.
+- To activate on a fresh checkout: `docker compose up -d --no-deps backend`.
+
+**Technical reference document**
+- `docs/routing-and-crime-points.md` — full technical reference covering:
+  GraphHopper 3-profile routing (fastest / balanced / safest), the
+  CrimeWeighting Java formula (`travelTimeSec + lambda * riskScore * distance`),
+  `edge_risk.json` provenance, KDE band labelling (separate from GH routing),
+  System A nearby incidents (Qdrant hybrid search, DOM Markers), System B All
+  Crime Points (GeoJSON + MapLibre GPU cluster layers), and the IncidentPopupCard
+  field mapping. Each claim has a file:line reference.
+
+### Phase 8 — GraphHopper crime-weighted routing + voice AI agent (2026-06-~)
+
+> Committed in: `aa4a6cd feat: GraphHopper crime-weighted routing, banding recalibration, BM25 rebuild, voice AI agent`
+
+**GraphHopper integration**
+- `graphhopper/` directory — self-contained GH server with custom Java weighting.
+- `graphhopper/src/CrimeWeighting.java` — `calcEdgeWeight()` returns
+  `travelTimeSec + lambda * riskScore * edge.getDistance()`. Three profiles:
+  `fastest` (lambda=0, no crime penalty), `balanced` (lambda=0.1),
+  `safest` (lambda=0.3). Edge risk scores loaded from `edge_risk.json` at
+  startup into a `HashMap<Long, Double>`.
+- `graphhopper/config.yml` — declares three custom profiles; `balanced` and
+  `safest` reference `crime_aware.lambda` and `crime_aware.edge_risk_path`.
+- `graphhopper/Dockerfile` — builds GH jar, copies Java source, compiles
+  `CrimeWeighting.java` into the GH classpath.
+- `ml/build_edge_risk.py` — exports all road edge IDs + centroids from GH
+  graph (`gh_edges.csv`), scores each centroid against the KDE model,
+  normalises to [0, 1], writes `ml/artifacts/edge_risk.json`.
+- `backend/app/routers/routes.py` — fires three parallel `asyncio.gather`
+  requests to `http://graphhopper:8989` (one per profile). GH returns the
+  geometry; KDE `score_route()` independently labels each with Low/Medium/High.
+- `docker-compose.yml` — `graphhopper` service with healthcheck
+  (`start_period=600s` for first-run graph preprocessing). Backend
+  `depends_on: graphhopper: condition: service_healthy`.
+- `GRAPHHOPPER_URL=http://graphhopper:8989` in root `.env`.
+- `ml/artifacts/edge_risk.json` mounted read-only into the GH container;
+  `ml/artifacts/gh_edges.csv` mounted writable so `EdgeExporter` can write it.
+
+**Banding recalibration**
+- `BAND_LOW_THRESHOLD` and `BAND_HIGH_THRESHOLD` in root `.env` updated to
+  `35671.7602` and `58229.0584` respectively — recalibrated against the
+  GraphHopper-derived route score distribution (GH scores are larger in
+  magnitude than ORS scores because the weighting formula multiplies by
+  `edge.getDistance()` in metres, producing scores in the tens-of-thousands
+  range rather than 0–35).
+
+**Voice AI agent**
+- `backend/app/routers/` — voice agent router added: accepts WebM/Ogg/MP4
+  audio from the browser, transcribes via `faster-whisper` (base model, CPU),
+  passes transcript to an Ollama LLM (`gemma4:e4b`), returns the response.
+- `backend/Dockerfile` — `apt-get install ffmpeg` (for faster-whisper audio
+  decoding) + `WhisperModel('base', device='cpu')` pre-download baked into
+  image layer. `WHISPER_DEVICE=cpu` env var controls device at runtime.
+- `WHISPER_DEVICE=cpu` in root `.env`. `GRAPHHOPPER_URL` also added.
+- Ollama is expected at `http://host.docker.internal:11434` (running on the
+  Windows host outside Docker). Set model via env var.
 
 ### Phase 7 — Personalised incidents + Qdrant Cloud production (2026-05-26)
 

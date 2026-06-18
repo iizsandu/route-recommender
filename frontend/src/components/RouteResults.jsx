@@ -9,12 +9,12 @@ const BADGE = {
   High:   { bg: 'bg-red-100',     text: 'text-red-800',     dot: 'bg-red-500'     },
 }
 
-// Route type metadata by index
-const ROUTE_META = [
-  { icon: '🛡', label: 'Safest Route',   insight: 'Lowest historical crime exposure'        },
-  { icon: '⚖', label: 'Balanced Route',  insight: 'Best compromise between safety and time' },
-  { icon: '⚡', label: 'Fastest Route',   insight: 'Shortest travel time available'           },
-]
+// Route type metadata keyed by route_type field from backend
+const ROUTE_META = {
+  safest:   { icon: '🛡', label: 'Safest Route',   insight: 'Lowest historical crime exposure'        },
+  balanced: { icon: '⚖', label: 'Balanced Route',  insight: 'Best compromise between safety and time' },
+  fastest:  { icon: '⚡', label: 'Fastest Route',   insight: 'Shortest travel time available'           },
+}
 
 // Left accent bar color per crime macro
 const SEVERITY_COLOR = {
@@ -230,7 +230,7 @@ export default function RouteResults({ routes, selectedIdx, onSelect, personalis
       {/* Route cards */}
       <div className="space-y-2.5">
         {routes.map((route, i) => {
-          const meta  = ROUTE_META[i] ?? { icon: '↗', label: `Alternative Route ${i + 1}`, insight: 'Additional route option' }
+          const meta  = ROUTE_META[route.route_type] ?? { icon: '↗', label: `Alternative Route ${i + 1}`, insight: 'Additional route option' }
           const badge = BADGE[route.risk_band] ?? BADGE.Medium
           return (
             <button

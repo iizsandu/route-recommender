@@ -53,13 +53,11 @@ def _cache_key(
     lat_o: float, lng_o: float,
     lat_d: float, lng_d: float,
     depart_time: datetime,
-    profile: str,
 ) -> str:
     return (
         f"{lat_o:.3f},{lng_o:.3f}"
         f"-{lat_d:.3f},{lng_d:.3f}"
         f"-{_time_band(depart_time)}"
-        f"-{profile}"
     )
 
 
@@ -98,22 +96,39 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
         if depart_time.tzinfo is None:
             depart_time = depart_time.replace(tzinfo=timezone.utc)
 
-        # Use the request profile (or server default if not specified).
-        # The cache key includes the profile so fastest/balanced/safest
-        # each get their own cache entry.
-        profile = req.profile or settings.SAFETY_PROFILE
-        ck = _cache_key(lat_o, lng_o, lat_d, lng_d, depart_time, profile)
+        ck = _cache_key(lat_o, lng_o, lat_d, lng_d, depart_time)
         cached = _RESPONSE_CACHE.get(ck)
         if cached is not None:
             logger.debug("route cache hit", extra={"cache_key": ck})
             return cached
 
-        # ── Fetch alternative routes from GraphHopper ────────────────────
-        raw_routes = await routing.get_routes(
-            origin=(lat_o, lng_o),
-            dest=(lat_d, lng_d),
-            profile=profile,
+        # ── Fetch all 3 profiles in parallel ─────────────────────────────
+        # WHY parallel: each profile is an independent GH request; fetching
+        # sequentially would triple latency (~600 ms → ~200 ms total).
+        # WHY one route per profile instead of alternative_route: for tight
+        # corridors (CP→India Gate etc.) GH alternative_route returns only 1
+        # path because no true geometric alternatives exist. Fetching 3
+        # profiles always yields 3 meaningfully different trade-offs.
+        _PROFILES = ["fastest", "balanced", "safest"]
+        gh_results = await asyncio.gather(
+            *[
+                routing.get_routes(origin=(lat_o, lng_o), dest=(lat_d, lng_d), profile=p)
+                for p in _PROFILES
+            ],
+            return_exceptions=True,
         )
+
+        # Collect one route per profile; skip if GH failed for that profile.
+        raw_routes: list[dict] = []
+        for profile, result in zip(_PROFILES, gh_results):
+            if isinstance(result, Exception):
+                logger.warning("GH profile %s failed: %s", profile, result)
+                continue
+            if result:
+                best = dict(result[0])   # copy so we can annotate without mutating cache
+                best["route_type"] = profile
+                raw_routes.append(best)
+
         if not raw_routes:
             raise HTTPException(status_code=502, detail="GraphHopper returned no routes")
 
@@ -171,6 +186,7 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
                     duration_sec=route["duration_sec"],
                     distance_m=route["distance_m"],
                     risk_band=_band(score, settings.BAND_LOW_THRESHOLD, settings.BAND_HIGH_THRESHOLD),
+                    route_type=route.get("route_type", "balanced"),
                     nearby_incidents=incidents,
                 )
             )

@@ -21,11 +21,6 @@ class RouteRequest(BaseModel):
     depart_time: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
-    # Optional per-request profile. None = use SAFETY_PROFILE server default.
-    # Valid values: "fastest", "balanced", "safest" (validated in routing.py).
-    # WHY not Literal: the valid set comes from GRAPHHOPPER_PROFILES config,
-    # which can be changed without a code deploy.
-    profile: Optional[str] = None
 
 
 class IncidentResult(BaseModel):
@@ -59,6 +54,9 @@ class RouteOption(BaseModel):
     # WHY Literal: enforces the 3-band contract at the type level. The raw
     # float score is never returned to the client — only the band label.
     risk_band:    Literal["Low", "Medium", "High"]
+    # Which GH profile produced this route — "fastest", "balanced", or "safest".
+    # Used by the frontend to assign colour and label independently of risk_band.
+    route_type:   str = "balanced"
     # WHY default=[]: if Qdrant is unavailable, the field is present but empty
     # rather than absent — frontend doesn't need to null-check the field.
     nearby_incidents: list[IncidentResult] = []
