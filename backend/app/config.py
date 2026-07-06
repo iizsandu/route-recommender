@@ -45,13 +45,6 @@ class Settings(BaseSettings):
     # profile selection so unknown values are rejected before reaching GH.
     GRAPHHOPPER_PROFILES: str = "fastest,balanced,safest"
 
-    # --- OpenRouteService (DEPRECATED — emergency fallback only) ---
-    # WHY empty default: ORS is no longer the primary router. If GRAPHHOPPER_URL
-    # is unreachable, set ORS_API_KEY to a real key in Azure env vars to serve
-    # routes without crime awareness until GH is restored.
-    ORS_API_KEY: str = ""
-    ORS_BASE_URL: str = "https://api.openrouteservice.org"
-
     # --- MLflow ---
     MLFLOW_TRACKING_URI: str = "sqlite:///ml/artifacts/mlruns.db"
     MLFLOW_REGISTRY_URI: str = "sqlite:///ml/artifacts/mlruns.db"

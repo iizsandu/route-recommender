@@ -28,6 +28,15 @@ export async function getPersonalisedIncidents(situation, waypoints, radiusKm = 
   }
 }
 
+export async function queryAgentText(message) {
+  try {
+    const res = await client.post('/agent/chat', { message })
+    return res.data   // { transcript, response }
+  } catch {
+    return null
+  }
+}
+
 export async function queryAgent(audioBlob) {
   const form = new FormData()
   form.append('audio', audioBlob, 'recording.webm')

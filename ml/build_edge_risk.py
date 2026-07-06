@@ -4,7 +4,6 @@ ml/build_edge_risk.py  —  Stage 2: Edge Risk Pipeline
 Reads:
   ml/artifacts/gh_edges.csv    — GH edge geometries (produced by EdgeExporter in Stage 0)
   ml/artifacts/kde_*.pkl       — KDE density models per crime category
-  ml/data/snapshots/crimes_*.parquet — crime pool with lat/lng/category/date
 
 Writes:
   ml/artifacts/edge_risk.json  — crime risk scores keyed by GH integer edge ID
@@ -12,10 +11,15 @@ Writes:
 Usage:
   python -m ml.build_edge_risk
   python -m ml.build_edge_risk --gh-edges path/to/gh_edges.csv
-  python -m ml.build_edge_risk --snapshot path/to/crimes_DATE.parquet
+  python -m ml.build_edge_risk --artifacts-dir path/to/kde/dir
 
 The JSON is read by CrimeWeighting.java at GraphHopper startup.
 Edge IDs are GH integers — no centroid matching, no locale issues.
+
+Scoring method: KDE surface evaluated at each edge centroid.
+The KDE models already encode the full spatial crime-density surface, so
+evaluating them at a centroid is equivalent to asking "how dangerous is
+the neighbourhood this road passes through?" — no raw crime records needed.
 """
 from __future__ import annotations
 
@@ -23,9 +27,7 @@ import argparse
 import json
 import logging
 import pickle
-import re
 import sys
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,8 +51,6 @@ log = logging.getLogger(__name__)
 
 ARTIFACTS_DIR = _REPO_ROOT / "ml" / "artifacts"
 COVERAGE_THRESHOLD = 0.10   # fail if < 10% of GH edges have a non-zero score
-BUFFER_METRES = 150         # crime points within this radius of a road are attributed to it
-HALF_LIFE_DAYS = 90         # recency decay: exp(-age_days / 90)
 
 
 # ── Step 1: Load KDE models ───────────────────────────────────────────────────
@@ -69,32 +69,7 @@ def load_kde_models(artifacts_dir: Path) -> dict:
     return models
 
 
-# ── Step 2: Load crime pool from Parquet ─────────────────────────────────────
-
-def load_crime_pool(snapshot_path: Path | None) -> pd.DataFrame:
-    """Load and filter the Parquet snapshot to the KDE-eligible crime pool."""
-    from ml.train_kde import build_kde_pool, find_latest_snapshot  # noqa: PLC0415
-    if snapshot_path is None:
-        snapshot_path = find_latest_snapshot()
-    log.info("Loading snapshot: %s", snapshot_path.name)
-    df = pd.read_parquet(snapshot_path)
-    pool = build_kde_pool(df)
-    log.info("  KDE pool: %d records", len(pool))
-    return pool
-
-
-def _validate_versions(pool: pd.DataFrame, kde_models: dict, snapshot_path: Path) -> None:
-    """Warn if KDE models were trained on a different snapshot than we loaded."""
-    snap_match = re.search(r"crimes_(\d{4}-\d{2}-\d{2})", snapshot_path.name)
-    if not snap_match:
-        return
-    snap_date = datetime.fromisoformat(snap_match.group(1)).replace(tzinfo=timezone.utc)
-    # We can't easily get trained_at from kde_models dict (we only stored the kde object).
-    # This check is informational only — no blocking.
-    log.info("  Snapshot date: %s", snap_match.group(1))
-
-
-# ── Step 3: Load GH edge geometries ──────────────────────────────────────────
+# ── Step 2: Load GH edge geometries ──────────────────────────────────────────
 
 def load_gh_edges(gh_edges_path: Path) -> gpd.GeoDataFrame:
     """
@@ -125,108 +100,7 @@ def load_gh_edges(gh_edges_path: Path) -> gpd.GeoDataFrame:
     return gdf
 
 
-# ── Step 4: Spatial matching ──────────────────────────────────────────────────
-
-def match_crimes_to_edges(
-    pool: pd.DataFrame,
-    edges_gdf: gpd.GeoDataFrame,
-) -> pd.DataFrame:
-    """
-    Buffer each GH edge LineString by BUFFER_METRES, spatial-join crime points.
-    Returns a DataFrame with columns: [crime index cols] + edge_id.
-
-    WHY buffer the full LineString (not midpoints): a 500m road segment has
-    crime incidents distributed along its length; buffering the midpoint misses
-    incidents at the far ends. LineString.buffer() creates a rounded corridor.
-
-    WHY EPSG:32643 (UTM Zone 43N): buffering in EPSG:4326 produces ellipses —
-    a 150m buffer becomes ~130m in the longitude direction at 28.6°N. UTM 43N
-    makes both axes equal in metres.
-    """
-    # Project to UTM Zone 43N (Delhi is at ~77°E, well within zone 43N: 72–78°E)
-    edges_proj = edges_gdf.to_crs("EPSG:32643")
-
-    # Build crime GeoDataFrame. pool has lat/lng columns.
-    # gpd.points_from_xy takes (x=lng, y=lat) → stores as Point(lng, lat) in EPSG:4326.
-    crime_geoms = gpd.points_from_xy(pool["lng"], pool["lat"])
-    crime_gdf = gpd.GeoDataFrame(pool.copy(), geometry=crime_geoms, crs="EPSG:4326")
-    crimes_proj = crime_gdf.to_crs("EPSG:32643")
-
-    # Buffer the full edge LineStrings by 150m (accurate metres in UTM).
-    edge_buffers = edges_proj.copy()
-    edge_buffers["geometry"] = edges_proj.geometry.buffer(BUFFER_METRES)
-    # Reset index to a simple integer so sjoin produces a single "index_right" column
-    # (not a MultiIndex). Without reset_index(), GeoPandas can produce index_right0/1/2
-    # if the right GeoDataFrame has a non-trivial index.
-    edge_buffers = edge_buffers.reset_index(drop=True)
-
-    log.info("  Running spatial join (150m buffer, %d crime points × %d edges)...",
-             len(crimes_proj), len(edge_buffers))
-
-    joined = crimes_proj.sjoin(
-        edge_buffers[["edge_id", "geometry"]],
-        how="left",
-        predicate="within",
-    )
-    # "index_right" is the integer row index of edge_buffers, which has "edge_id" as a column.
-    matched = joined.dropna(subset=["index_right"])
-    log.info("  Matched: %d crime-edge pairs  |  Discarded: %d crime points",
-             len(matched), len(joined) - len(matched))
-    return matched
-
-
-# ── Step 5: Accumulate risk scores per edge ───────────────────────────────────
-
-def _recency_weight(effective_date, today: datetime) -> float:
-    """exp(-age_days / 90). Null dates treated as weight=1.0 (same as KDE training)."""
-    if pd.isna(effective_date):
-        return 1.0
-    try:
-        age_days = max(0, (today - effective_date.replace(tzinfo=timezone.utc)).days)
-    except (AttributeError, TypeError):
-        return 1.0
-    return float(np.exp(-age_days / HALF_LIFE_DAYS))
-
-
-def accumulate_scores(
-    matched: pd.DataFrame,
-    kde_models: dict,
-) -> dict[int, float]:
-    """
-    For each matched (crime_point, edge) pair, accumulate:
-        kde_density(c.lat, c.lng) × female_weight(c.category) × recency_weight(c.date)
-
-    WHY evaluate KDE at the crime point's own location (not the edge midpoint):
-    A crime in a dense crime cluster evaluates to a higher KDE density, amplifying
-    the contribution of crimes that occur where many other similar crimes happened.
-    This makes the edge risk a function of both the crime's recency/type AND the
-    overall dangerousness of that neighbourhood.
-
-    WHY a crime within 150m of multiple edges contributes to all of them:
-    A crime in a market square surrounded by four roads represents real risk on
-    all four roads. Attributing to the nearest road only would create discontinuities.
-    """
-    today = datetime.now(timezone.utc)
-    edge_raw_scores: dict[int, float] = defaultdict(float)
-
-    for _, row in matched.iterrows():
-        cat = row.get("crime_macro")
-        if cat not in kde_models or cat not in FEMALE_WEIGHTS:
-            continue
-        eid = int(row["edge_id"])
-
-        # KDE expects shape (2, 1): row 0 = lat, row 1 = lng.
-        # Confirmed from pkl inspection: kde.dataset[0] = latitudes.
-        density = float(kde_models[cat](np.array([[row.lat], [row.lng]]))[0])
-        fw      = FEMALE_WEIGHTS[cat]
-        rw      = _recency_weight(row.get("effective_date"), today)
-        edge_raw_scores[eid] += density * fw * rw
-
-    log.info("  Edges with at least one crime: %d", len(edge_raw_scores))
-    return dict(edge_raw_scores)
-
-
-# ── Step 5b: KDE-at-centroid (no snapshot needed) ────────────────────────────
+# ── Step 3: Score edges via KDE surface ───────────────────────────────────────
 
 def score_edges_via_kde_surface(
     edges_gdf: gpd.GeoDataFrame,
@@ -240,7 +114,7 @@ def score_edges_via_kde_surface(
     WHY centroid approach: the KDE models already encode the full spatial
     crime density surface — evaluating them at an edge centroid is equivalent
     to asking "how dense is crime near this road segment?" without needing to
-    re-read the raw crime records. Suitable when a fresh snapshot isn't available.
+    re-read the raw crime records.
 
     WHY batched: scipy gaussian_kde.evaluate() is O(N×M) where N = training
     points and M = query points. Processing 546K edges at once allocates a
@@ -272,7 +146,7 @@ def score_edges_via_kde_surface(
     return {int(eid): float(s) for eid, s in zip(edge_ids, weighted)}
 
 
-# ── Step 6: P99 normalisation ─────────────────────────────────────────────────
+# ── Step 4: P99 normalisation ─────────────────────────────────────────────────
 
 def normalise_scores(raw_scores: dict[int, float]) -> dict[int, float]:
     """
@@ -301,14 +175,12 @@ def normalise_scores(raw_scores: dict[int, float]) -> dict[int, float]:
     return normalised
 
 
-# ── Step 7: Write JSON ────────────────────────────────────────────────────────
+# ── Step 5: Write JSON ────────────────────────────────────────────────────────
 
 def write_output(
     normalised: dict[int, float],
     n_edges_total: int,
-    n_crime_points: int,
     raw_scores: dict[int, float],
-    snapshot_path: Path,
     gh_edges_path: Path,
     out_path: Path,
 ) -> None:
@@ -322,14 +194,10 @@ def write_output(
         "metadata": {
             "n_edges_scored": n_edges_scored,
             "n_edges_total": n_edges_total,
-            "n_crime_points": n_crime_points,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "max_raw_score": float(max(raw_scores.values())) if raw_scores else 0.0,
             "p99_raw_score": float(np.percentile(list(raw_scores.values()), 99))
                              if raw_scores else 0.0,
-            "snapshot_date": re.search(r"crimes_(\d{4}-\d{2}-\d{2})",
-                                       snapshot_path.name).group(1)
-                             if snapshot_path else "unknown",
             # Docker-entrypoint.sh compares this to actual CSV row count to detect
             # a stale JSON built from a different graph version.
             "gh_edges_csv_rows": n_edges_total,
@@ -346,8 +214,8 @@ def write_output(
     if coverage < COVERAGE_THRESHOLD:
         log.error(
             "FAIL: non-zero risk coverage %.1f%% < %.0f%% threshold.\n"
-            "  Try widening BUFFER_METRES from %d to 250, or investigate the crime pool filter.",
-            coverage * 100, COVERAGE_THRESHOLD * 100, BUFFER_METRES,
+            "  Check that kde_*.pkl files are present in artifacts dir.",
+            coverage * 100, COVERAGE_THRESHOLD * 100,
         )
         sys.exit(1)
 
@@ -362,11 +230,6 @@ def main() -> None:
     parser.add_argument("--artifacts-dir", type=Path,
                         default=ARTIFACTS_DIR,
                         help="Directory containing kde_*.pkl files.")
-    parser.add_argument("--snapshot", type=Path,
-                        default=None,
-                        help="Path to a specific crimes_*.parquet snapshot.")
-    parser.add_argument("--kde-only", action="store_true",
-                        help="Score edges by evaluating KDE at centroids — no snapshot needed.")
     args = parser.parse_args()
 
     if not args.gh_edges.exists():
@@ -383,35 +246,15 @@ def main() -> None:
     log.info("[2] Loading GH edge geometries ...")
     edges_gdf = load_gh_edges(args.gh_edges)
 
-    if args.kde_only:
-        # ── KDE-at-centroid path (no parquet required) ────────────────────────
-        log.info("[3] Scoring edges via KDE surface at centroids (--kde-only) ...")
-        raw_scores = score_edges_via_kde_surface(edges_gdf, kde_models)
-        snap_path  = None
-        n_crimes   = 0
-    else:
-        # ── Full spatial-join path (requires crime snapshot parquet) ──────────
-        log.info("[3] Loading crime snapshot ...")
-        from ml.train_kde import find_latest_snapshot  # noqa: PLC0415
-        pool      = load_crime_pool(args.snapshot)
-        snap_path = args.snapshot or find_latest_snapshot()
-        _validate_versions(pool, kde_models, snap_path)
-        n_crimes  = len(pool)
+    log.info("[3] Scoring edges via KDE surface at centroids ...")
+    raw_scores = score_edges_via_kde_surface(edges_gdf, kde_models)
 
-        log.info("[4] Spatial matching: crime points → GH edges (150m buffer) ...")
-        matched = match_crimes_to_edges(pool, edges_gdf)
-
-        log.info("[5] Accumulating risk scores ...")
-        raw_scores = accumulate_scores(matched, kde_models)
-
-    log.info("[final] Normalising (P99 clip) and writing output ...")
+    log.info("[4] Normalising (P99 clip) and writing output ...")
     normalised = normalise_scores(raw_scores)
     write_output(
         normalised=normalised,
         n_edges_total=len(edges_gdf),
-        n_crime_points=n_crimes,
         raw_scores=raw_scores,
-        snapshot_path=snap_path,
         gh_edges_path=args.gh_edges,
         out_path=ARTIFACTS_DIR / "edge_risk.json",
     )

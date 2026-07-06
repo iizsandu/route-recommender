@@ -13,7 +13,6 @@ os.environ.setdefault(
     "COSMOS_CONNECTION_STRING",
     "AccountEndpoint=https://dummy.documents.azure.com:443/;AccountKey=ZHVtbXk=;",
 )
-os.environ.setdefault("ORS_API_KEY", "dummy-ors-key")
 os.environ.setdefault("KDE_ARTIFACTS_DIR", "/tmp/fake-kde-artifacts")
 os.environ.setdefault("BAND_LOW_THRESHOLD", "0.07")
 os.environ.setdefault("BAND_HIGH_THRESHOLD", "0.91")

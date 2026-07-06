@@ -27,8 +27,8 @@ _ROUTES_TOTAL = Counter(
 )
 
 # Route response cache — keyed on (origin, dest, time_band, profile) rounded to
-# 3 decimal places (~111m). TTL=5 min avoids burning ORS quota for repeat queries
-# while staying fresh enough that risk bands don't meaningfully drift.
+# 3 decimal places (~111m). TTL=5 min keeps responses fresh while avoiding
+# redundant GraphHopper + KDE calls for repeated queries.
 _RESPONSE_CACHE: TTLCache = TTLCache(ttl_seconds=300)
 
 
@@ -78,18 +78,18 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
         # ── Resolve origin ────────────────────────────────────────────────
         if isinstance(req.origin, str):
             lat_o, lng_o = await geocoding.geocode(req.origin)
-            print(f"Geocoded origin {req.origin}")
+            logger.debug("geocoded origin: %s → (%.4f, %.4f)", req.origin, lat_o, lng_o)
         else:
             lat_o, lng_o = req.origin.lat, req.origin.lng
-            print(f"origin fetched from cache")
+            logger.debug("origin from coordinates: (%.4f, %.4f)", lat_o, lng_o)
 
         # ── Resolve destination ───────────────────────────────────────────
         if isinstance(req.destination, str):
             lat_d, lng_d = await geocoding.geocode(req.destination)
-            print(f"Geocoded destination {req.destination}")
+            logger.debug("geocoded destination: %s → (%.4f, %.4f)", req.destination, lat_d, lng_d)
         else:
             lat_d, lng_d = req.destination.lat, req.destination.lng
-            print(f"destination fetched from cache")
+            logger.debug("destination from coordinates: (%.4f, %.4f)", lat_d, lng_d)
 
         # ── Cache check ───────────────────────────────────────────────────
         depart_time = req.depart_time
@@ -102,14 +102,12 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
             logger.debug("route cache hit", extra={"cache_key": ck})
             return cached
 
-        # ── Fetch all 3 profiles in parallel ─────────────────────────────
-        # WHY parallel: each profile is an independent GH request; fetching
-        # sequentially would triple latency (~600 ms → ~200 ms total).
-        # WHY one route per profile instead of alternative_route: for tight
-        # corridors (CP→India Gate etc.) GH alternative_route returns only 1
-        # path because no true geometric alternatives exist. Fetching 3
-        # profiles always yields 3 meaningfully different trade-offs.
-        _PROFILES = ["fastest", "balanced", "safest"]
+        # ── Fetch both profiles in parallel ──────────────────────────────
+        # WHY parallel: two independent GH requests; sequential would double latency.
+        # WHY two profiles not alternative_route: for tight corridors GH alternative_route
+        # returns only 1 path because no true geometric alternatives exist. Two profiles
+        # always yield two meaningfully different trade-offs.
+        _PROFILES = ["fastest", "safest"]
         gh_results = await asyncio.gather(
             *[
                 routing.get_routes(origin=(lat_o, lng_o), dest=(lat_d, lng_d), profile=p)
@@ -139,6 +137,8 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
                 waypoints=route["waypoints"],
                 depart_time=depart_time,
                 route_eta_sec=route["duration_sec"],
+                kde_weight=settings.KDE_ENSEMBLE_WEIGHT,
+                lgb_weight=settings.LGB_ENSEMBLE_WEIGHT,
             )
             # WHY log score but not return it: raw float scores for specific
             # neighbourhoods carry defamation risk. Only the band goes to client.
@@ -150,6 +150,15 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
 
         # Sort ascending — lowest risk first.
         scored.sort(key=lambda x: x[0])
+
+        # WHY re-label by rank: GH profile names ("fastest"/"safest") describe the
+        # routing strategy, not the KDE outcome. After independent scoring, the
+        # "fastest" GH path can outscore "safest" on KDE — producing contradictory
+        # "Safest Route — Medium Risk" vs "Fastest Route — Low Risk" labels.
+        # Reassigning by rank guarantees the displayed label always matches the band.
+        _RANK_LABELS = ["safest", "fastest"]
+        for rank, (_, route) in enumerate(scored):
+            route["route_type"] = _RANK_LABELS[rank] if rank < len(_RANK_LABELS) else "fastest"
 
         options = []
         for score, route in scored:

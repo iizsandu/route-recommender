@@ -1,9 +1,11 @@
 """
 POST /agent/query — receive audio, transcribe, run CrewAI agent, return answer.
+POST /agent/chat  — receive plain text, run CrewAI agent, return answer.
 """
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from pydantic import BaseModel
 
 from app.schemas.routes import AgentResponse
 from app.services import agent_service, whisper_service
@@ -13,6 +15,22 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@router.post("/chat", response_model=AgentResponse)
+@limiter.limit("20/minute")
+async def chat(request: Request, body: ChatRequest) -> AgentResponse:
+    """Accept plain text, skip transcription, run CrewAI agent, return answer."""
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    response_text = await asyncio.to_thread(agent_service.query, message)
+    return AgentResponse(transcript=message, response=response_text)
 
 
 @router.post("/query", response_model=AgentResponse)

@@ -6,6 +6,7 @@ import RouteForm from './components/RouteForm'
 import RouteResults from './components/RouteResults'
 import MapView from './components/MapView'
 import VoiceAgent from './components/VoiceAgent'
+import ChatAgent from './components/ChatAgent'
 
 function ShieldIcon() {
   return (
@@ -132,6 +133,7 @@ export default function App() {
         {/* Map */}
         <main className="flex-1 min-h-[400px] md:min-h-0 relative">
           <VoiceAgent />
+          <ChatAgent />
           <MapView
             routes={routes}
             selectedIdx={selectedIdx}

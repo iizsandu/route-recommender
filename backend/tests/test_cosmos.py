@@ -26,12 +26,11 @@ async def _async_iter(items):
 def settings() -> Settings:
     # WHY: model_construct() skips Pydantic validation entirely.
     # Settings() would raise ValidationError because COSMOS_CONNECTION_STRING
-    # and ORS_API_KEY have no defaults — we'd need real env vars in CI.
+    # has no default — we'd need a real env var in CI.
     return Settings.model_construct(
         COSMOS_CONNECTION_STRING="AccountEndpoint=https://fake.documents.azure.com:443/;AccountKey=ZmFrZQ==;",
         COSMOS_DATABASE_NAME="test_db",
         COSMOS_CONTAINER_NAME="test_crimes",
-        ORS_API_KEY="fake_key",
     )
 
 # --- _strip_metadata unit tests (synchronous — no async needed) ---

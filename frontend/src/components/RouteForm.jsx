@@ -1,6 +1,7 @@
 // frontend/src/components/RouteForm.jsx
 import { useState } from 'react'
 import TimeOfDayPicker from './TimeOfDayPicker'
+import LocationInput from './LocationInput'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
@@ -36,18 +37,40 @@ function ArrowIcon({ size = 14 }) {
 export default function RouteForm({ onSubmit, onPinLocations, loading }) {
   const [origin, setOrigin]           = useState('')
   const [destination, setDestination] = useState('')
+  // WHY separate *Place state: when set, it holds the lat/lng of a popular
+  // place picked from the LocationInput dropdown, so submit/pin can skip
+  // geocoding for that field entirely. Cleared on any manual text edit.
+  const [originPlace, setOriginPlace]           = useState(null)
+  const [destinationPlace, setDestinationPlace] = useState(null)
   const [departTime, setDepartTime]   = useState(new Date().toISOString())
   const [pinning, setPinning]         = useState(false)
   const [pinError, setPinError]       = useState(null)
+
+  function handleOriginChange(text, place) {
+    setOrigin(text)
+    setOriginPlace(place)
+  }
+
+  function handleDestinationChange(text, place) {
+    setDestination(text)
+    setDestinationPlace(place)
+  }
 
   function handleSubmit(e) {
     e.preventDefault()
     if (!origin.trim() || !destination.trim()) return
     onSubmit({
-      origin: origin.trim(),
-      destination: destination.trim(),
+      origin: originPlace ? { lat: originPlace.lat, lng: originPlace.lng } : origin.trim(),
+      destination: destinationPlace ? { lat: destinationPlace.lat, lng: destinationPlace.lng } : destination.trim(),
       depart_time: departTime,
     })
+  }
+
+  async function geocodeOrUsePlace(text, place, label) {
+    if (place) return { lat: place.lat, lng: place.lng }
+    const res = await fetch(`${BASE_URL}/geocode?q=${encodeURIComponent(text)}`)
+    if (!res.ok) throw new Error(`Could not geocode ${label}: "${text}"`)
+    return res.json()
   }
 
   async function handlePinLocations() {
@@ -55,13 +78,10 @@ export default function RouteForm({ onSubmit, onPinLocations, loading }) {
     setPinning(true)
     setPinError(null)
     try {
-      const [oRes, dRes] = await Promise.all([
-        fetch(`${BASE_URL}/geocode?q=${encodeURIComponent(origin.trim())}`),
-        fetch(`${BASE_URL}/geocode?q=${encodeURIComponent(destination.trim())}`),
+      const [o, d] = await Promise.all([
+        geocodeOrUsePlace(origin.trim(), originPlace, 'origin'),
+        geocodeOrUsePlace(destination.trim(), destinationPlace, 'destination'),
       ])
-      if (!oRes.ok) throw new Error(`Could not geocode origin: "${origin}"`)
-      if (!dRes.ok) throw new Error(`Could not geocode destination: "${destination}"`)
-      const [o, d] = await Promise.all([oRes.json(), dRes.json()])
       onPinLocations({ origin: o, destination: d })
     } catch (err) {
       setPinError(err.message)
@@ -74,7 +94,8 @@ export default function RouteForm({ onSubmit, onPinLocations, loading }) {
     <form onSubmit={handleSubmit} className="space-y-3">
 
       {/* Route origin + destination card */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      {/* WHY no overflow-hidden: would clip the LocationInput suggestion dropdown */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
 
         {/* FROM row */}
         <div className="flex items-center gap-3 px-4 py-3.5">
@@ -85,13 +106,11 @@ export default function RouteForm({ onSubmit, onPinLocations, loading }) {
             <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
               From
             </label>
-            <input
-              type="text"
+            <LocationInput
               value={origin}
-              onChange={e => setOrigin(e.target.value)}
+              onChange={handleOriginChange}
               placeholder="Enter starting location"
-              required
-              className="block w-full text-sm text-slate-900 placeholder-slate-300 bg-transparent focus:outline-none"
+              inputClassName="block w-full text-sm text-slate-900 placeholder-slate-300 bg-transparent focus:outline-none"
             />
           </div>
         </div>
@@ -116,13 +135,11 @@ export default function RouteForm({ onSubmit, onPinLocations, loading }) {
             <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-0.5">
               To
             </label>
-            <input
-              type="text"
+            <LocationInput
               value={destination}
-              onChange={e => setDestination(e.target.value)}
+              onChange={handleDestinationChange}
               placeholder="Enter destination"
-              required
-              className="block w-full text-sm text-slate-900 placeholder-slate-300 bg-transparent focus:outline-none"
+              inputClassName="block w-full text-sm text-slate-900 placeholder-slate-300 bg-transparent focus:outline-none"
             />
           </div>
         </div>

@@ -4,8 +4,7 @@ import Map, { Source, Layer, NavigationControl, GeolocateControl, Marker, Popup 
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 const ROUTE_TYPE_COLOR = {
-  safest:   '#22c55e',   // green  — matches RouteLegend
-  balanced: '#f59e0b',   // amber
+  safest:   '#22c55e',   // green
   fastest:  '#ef4444',   // red
 }
 
@@ -542,13 +541,6 @@ function RouteLegend() {
           <div className="flex items-center gap-1.5">
             <div className="w-6 h-1 rounded-full bg-emerald-500" />
             <span className="text-xs text-slate-600">Safest</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <span className="text-sm select-none">⚖</span>
-          <div className="flex items-center gap-1.5">
-            <div className="w-6 h-1 rounded-full bg-amber-400" />
-            <span className="text-xs text-slate-600">Balanced</span>
           </div>
         </div>
         <div className="flex items-center gap-2.5">

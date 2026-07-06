@@ -44,8 +44,9 @@ for routing.
 heatmap (per-category KDE PNGs), nearby incidents (Qdrant hybrid search +
 BM25), personalised incidents (semantic questionnaire → situation-aware
 retrieval), A/B map pins, GraphHopper crime-weighted routing (3 profiles:
-fastest / balanced / safest), and a voice AI agent (Whisper STR + Ollama
-LLM) all working end-to-end. 8,797 crime records ingested from Cosmos DB;
+fastest / balanced / safest), voice AI agent (Whisper STT + Ollama LLM),
+and text chat agent (chatbot UI with 5 sample questions, same CrewAI backend)
+all working end-to-end. 8,797 crime records ingested from Cosmos DB;
 4,655 in KDE pool across 8 categories; 4,989 indexed for the All Crime
 Points map layer (797 placeholder-coordinate records filtered out).
 Geocoding uses Mappls primary + Nominatim fallback (ORS Pelias removed).
@@ -53,8 +54,9 @@ All Phase 0–8 work complete. Production fully operational on Azure Container
 Apps + Vercel.
 
 **Tech Stack:** Python 3.11+, FastAPI, React 18 + Vite, MapLibre GL JS,
-OpenRouteService API, KDE risk model (scipy), MLflow, Azure Container Apps,
-Vercel, Azure Cosmos DB (read-only), Qdrant Cloud (free tier, vector search).
+GraphHopper (crime-weighted routing), KDE risk model (scipy), MLflow,
+Azure Container Apps, Vercel, Azure Cosmos DB (read-only), Qdrant Cloud
+(free tier, vector search), Whisper (STT), Ollama + CrewAI (LLM agent).
 
 **Budget:** ₹500/month additional (on top of the existing ₹2,000 sister-repo
 budget). Projected actual cost: ₹0–200/month using free tiers throughout.
@@ -415,7 +417,7 @@ queries to avoid drift. Stored in a small SQLite or JSON file.
 
 ## Active Sprint — Phase 5: Productionisation
 
-> **Status as of 2026-06-18:**
+> **Status as of 2026-06-19:**
 > - Phase 0 (Bootstrap) ✅ complete
 > - Phase 1 (Risk Surface MVP) ✅ complete
 > - Phase 2 (Frontend MVP) ✅ complete
@@ -761,10 +763,6 @@ COSMOS_CONNECTION_STRING=AccountEndpoint=https://...
 COSMOS_DATABASE_NAME=route_recommender
 COSMOS_CONTAINER_NAME=structured_crimes
 
-# OpenRouteService (directions only — geocoding uses Mappls/Nominatim)
-ORS_API_KEY=eyJvcmc...
-ORS_BASE_URL=https://api.openrouteservice.org
-
 # Geocoding — Mappls (MapMyIndia) primary, Nominatim fallback
 MAPPLS_API_KEY=your_mappls_key_here    # 250 req/day free tier; empty = skip to Nominatim
 
@@ -862,6 +860,27 @@ VITE_SENTRY_DSN=                        # empty = Sentry disabled; set in Vercel
 ## Sprint Completed Log
 
 > Move tasks here when fully implemented + tested + deployed.
+
+### 2026-06-19 — Unit tests, stale code cleanup, text chat agent
+
+**Unit tests for build_edge_risk.py**
+- `ml/tests/__init__.py` — created (makes ml/tests a package).
+- `ml/tests/test_edge_risk.py` — 4 tests: `normalise_scores` (P99 clip, single value, empty dict); KDE reproduction (5 anchor edges with hardcoded centroid lat/lng, asserts ±0.01 against `edge_risk.json`).
+- Skip guard: `pytest.importorskip("geopandas")` — silently skips in `backend/venv311`, runs in `ml/venv`.
+- Reproduction test reads `p99_raw_score` from `edge_risk.json` metadata, loads live `kde_*.pkl`, recomputes weighted density at each anchor centroid, asserts match.
+- Run: `ml/venv/Scripts/python.exe -m pytest ml/tests/test_edge_risk.py -v` — 4/4 pass.
+
+**Stale code cleanup (4 fixes across 6 files; all 28 backend + 4 ML tests still passing)**
+- `backend/app/routers/routes.py` — 4 `print()` → `logger.debug()` (were leaking geocoded user addresses to stdout in production).
+- `backend/app/config.py` + `.env.example` + `backend/tests/conftest.py` + `backend/tests/test_cosmos.py` — removed `ORS_API_KEY` / `ORS_BASE_URL` entirely (no backend code read these after GraphHopper replaced ORS for routing; the fields were declared but never consumed).
+- `backend/app/routers/routes.py` — `score_route()` call now passes `settings.KDE_ENSEMBLE_WEIGHT` and `settings.LGB_ENSEMBLE_WEIGHT` instead of relying on the function-default hardcoded 0.7/0.3; the config fields are now actually read.
+- `ml/build_edge_risk.py` — removed dead spatial-join path (~130 lines): `load_crime_pool()`, `_validate_versions()`, `match_crimes_to_edges()`, `_recency_weight()`, `accumulate_scores()`; simplified `write_output()` (no `snapshot_path`, no `n_crime_points`); `main()` always calls `score_edges_via_kde_surface()` (production always used `--kde-only`; confirmed by `edge_risk.json` metadata `n_crime_points: 0`); removed `re`, `defaultdict` imports; removed `BUFFER_METRES`, `HALF_LIFE_DAYS` constants.
+
+**Text chat agent (POST /agent/chat + ChatAgent.jsx)**
+- `backend/app/routers/agent.py` — added `ChatRequest(BaseModel)` + `POST /agent/chat`: accepts `{"message": str}`, skips Whisper, calls `agent_service.query()` directly, returns `AgentResponse`; rate-limited 20/min via slowapi (`request: Request` param required for IP extraction).
+- `frontend/src/api/client.js` — added `queryAgentText(message)` named export → `POST /agent/chat`.
+- `frontend/src/components/ChatAgent.jsx` — new component: chat bubble toggle button at `absolute bottom-8 right-20` (left of mic button); 440px panel with indigo header + online dot; 5 sample question chips shown in empty state (full-width, one-click to send); scrollable message bubbles (user=indigo-600 right-aligned, bot=slate-100 left-aligned); 3-dot bouncing typing indicator (0/150/300 ms delays); text input with Enter-key send; messages persist across open/close.
+- `frontend/src/App.jsx` — added `<ChatAgent />` alongside `<VoiceAgent />` inside the map `<main>` area.
 
 ### Phase 8 — Bug fixes, data quality, dev ergonomics (2026-06-18)
 
