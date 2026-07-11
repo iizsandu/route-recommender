@@ -20,16 +20,107 @@ from typing import Optional
 from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
+
+class _HttpxQdrantClient:
+    """
+    Thin httpx-based wrapper that replaces QdrantClient for the search path.
+
+    WHY: qdrant_client 1.9.1 uses httpcore's sync SSL backend which fails with
+    [SSL: UNEXPECTED_EOF_WHILE_READING] from Docker Desktop on Windows. Plain
+    httpx.Client works fine for the same endpoint. This wrapper exposes only the
+    two methods that hybrid_search() calls (search + query) as direct REST POST
+    calls, bypassing qdrant_client's httpcore transport entirely.
+    """
+
+    def __init__(self, url: str, api_key: str, timeout: int = 10) -> None:
+        import httpx
+        self._base_url = url.rstrip("/")
+        self._client = httpx.Client(
+            headers={"api-key": api_key} if api_key else {},
+            timeout=timeout,
+        )
+
+    def _filter_to_dict(self, f) -> Optional[dict]:
+        """Convert a qdrant_client Filter object to plain JSON dict."""
+        if f is None:
+            return None
+        from qdrant_client.models import Filter, FieldCondition, MatchAny, Range
+        must = []
+        for cond in (f.must or []):
+            if isinstance(cond, FieldCondition):
+                if cond.range is not None:
+                    r = cond.range
+                    rng = {}
+                    if r.gte is not None: rng["gte"] = r.gte
+                    if r.lte is not None: rng["lte"] = r.lte
+                    must.append({"key": cond.key, "range": rng})
+                elif cond.match is not None:
+                    m = cond.match
+                    if hasattr(m, "any"):
+                        must.append({"key": cond.key, "match": {"any": m.any}})
+                    else:
+                        must.append({"key": cond.key, "match": {"value": m.value}})
+        return {"must": must} if must else None
+
+    def _vec_payload(self, query_vector) -> dict:
+        """Convert qdrant_client vector arg to REST payload field."""
+        from qdrant_client.models import NamedSparseVector, SparseVector
+        if isinstance(query_vector, tuple):
+            # ("dense", [float, ...])
+            return {"name": query_vector[0], "vector": query_vector[1]}
+        if isinstance(query_vector, NamedSparseVector):
+            sv = query_vector.vector
+            return {"name": query_vector.name, "vector": {"indices": sv.indices, "values": sv.values}}
+        # plain list
+        return {"vector": query_vector}
+
+    def search(self, collection_name: str, query_vector, query_filter=None, limit: int = 10, with_payload: bool = True):
+        """Replicate QdrantClient.search() via direct REST POST."""
+        payload: dict = {
+            "vector": self._vec_payload(query_vector),
+            "limit": limit,
+            "with_payload": with_payload,
+        }
+        flt = self._filter_to_dict(query_filter)
+        if flt:
+            payload["filter"] = flt
+
+        resp = self._client.post(
+            f"{self._base_url}/collections/{collection_name}/points/search",
+            json=payload,
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result", [])
+        return [_Hit(r["id"], r.get("payload") or {}) for r in result]
+
+    def close(self) -> None:
+        self._client.close()
+
+
+class _Hit:
+    """Minimal stand-in for qdrant_client ScoredPoint."""
+    __slots__ = ("id", "payload")
+
+    def __init__(self, id_, payload):
+        self.id = id_
+        self.payload = payload
+
 # WHY: retrieval/ lives at repo root, not inside backend/. Insert repo root so
 # `from retrieval.search import hybrid_search` resolves correctly.
 _REPO_ROOT = Path(__file__).resolve().parents[3]  # backend/app/services/ → repo root
 sys.path.insert(0, str(_REPO_ROOT))
 
 # ── Module-level singletons ────────────────────────────────────────────────
-_client = None       # QdrantClient — None if Qdrant unavailable
+_client = None       # _HttpxQdrantClient — None if Qdrant unavailable
 _embed_model = None  # SentenceTransformer — None if sentence-transformers not installed
 _bm25 = None         # BM25Okapi — None if bm25_model.pkl not found
 _ready = False       # True only when all three are loaded
+
+# Saved at init time so _reconnect() can recreate the client without re-init.
+_qdrant_url: str = ""
+_qdrant_api_key: str = ""
+_qdrant_host: str = ""
+_qdrant_port: int = 6333
 
 # Constant query text for Feature A (route evidence retrieval).
 # WHY constant: the primary filter is geo, not text. This query surfaces
@@ -39,6 +130,32 @@ _SAFETY_QUERY = "crime robbery assault kidnapping safety woman female"
 # WHY 500m: 100m (KDE scoring interval) → 20+ Qdrant queries per route with
 # heavy overlap (2km radius). 500m → 5-8 queries, minimal overlap, 4× faster.
 _SAMPLE_INTERVAL_M = 500.0
+
+
+def _reconnect() -> bool:
+    """Recreate the _HttpxQdrantClient to flush stale httpx connection pool."""
+    global _client
+    if not _qdrant_url and not _qdrant_host:
+        return False
+    try:
+        if _client is not None:
+            try:
+                _client.close()
+            except Exception:
+                pass
+        if _qdrant_url:
+            _client = _HttpxQdrantClient(url=_qdrant_url, api_key=_qdrant_api_key, timeout=5)
+        else:
+            _client = _HttpxQdrantClient(
+                url=f"http://{_qdrant_host}:{_qdrant_port}",
+                api_key=_qdrant_api_key,
+                timeout=5,
+            )
+        logger.info("Qdrant client reconnected")
+        return True
+    except Exception as exc:
+        logger.warning("Qdrant reconnect failed: %s", exc)
+        return False
 
 
 def init(
@@ -54,24 +171,44 @@ def init(
     qdrant_url takes precedence over qdrant_host/qdrant_port when set (cloud mode).
     """
     global _client, _embed_model, _bm25, _ready
+    global _qdrant_url, _qdrant_api_key, _qdrant_host, _qdrant_port
 
     if not qdrant_url and not qdrant_host:
         logger.info("QDRANT_HOST/QDRANT_URL not set — retrieval features disabled (graceful)")
         return False
 
-    # Connect to Qdrant — cloud URL takes precedence over host:port
+    # Save connection params so _reconnect() can recreate the client later.
+    _qdrant_url = qdrant_url
+    _qdrant_api_key = qdrant_api_key
+    _qdrant_host = qdrant_host
+    _qdrant_port = qdrant_port
+
+    # Create httpx-based Qdrant client (bypasses qdrant_client's httpcore SSL issues).
+    # WHY _HttpxQdrantClient not QdrantClient: qdrant_client 1.9.1 uses httpcore's sync
+    # SSL backend which fails with UNEXPECTED_EOF_WHILE_READING from Docker Desktop on
+    # Windows. Plain httpx works for the same endpoint. _HttpxQdrantClient implements
+    # only the search() method that hybrid_search() calls.
+    if qdrant_url:
+        _client = _HttpxQdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=5)
+        logger.info("Qdrant Cloud client created (%s)", qdrant_url)
+    else:
+        _client = _HttpxQdrantClient(
+            url=f"http://{qdrant_host}:{qdrant_port}",
+            api_key=qdrant_api_key,
+            timeout=5,
+        )
+        logger.info("Qdrant client created (%s:%d)", qdrant_host, qdrant_port)
+
+    # Health check via plain httpx GET /collections — non-fatal if it fails.
     try:
-        from qdrant_client import QdrantClient
-        if qdrant_url:
-            _client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key or None, timeout=5)
-            logger.info("Qdrant Cloud connected at %s", qdrant_url)
-        else:
-            _client = QdrantClient(host=qdrant_host, port=qdrant_port, timeout=5)
-            logger.info("Qdrant connected at %s:%d", qdrant_host, qdrant_port)
-        _client.get_collections()  # cheap health check
+        import httpx as _httpx
+        hdr = {"api-key": qdrant_api_key} if qdrant_api_key else {}
+        base = qdrant_url or f"http://{qdrant_host}:{qdrant_port}"
+        r = _httpx.get(f"{base.rstrip('/')}/collections", headers=hdr, timeout=5)
+        r.raise_for_status()
+        logger.info("Qdrant health check passed (%d collections)", len(r.json().get("result", {}).get("collections", [])))
     except Exception as exc:
-        logger.warning("Qdrant unreachable (%s) — retrieval disabled", exc)
-        return False
+        logger.warning("Qdrant health check failed (%s) — search will retry on first call", exc)
 
     # Load bge-small embedding model
     try:
@@ -117,8 +254,10 @@ def get_nearby_incidents(
     """
     if not _ready:
         return []
-    try:
-        from retrieval.search import hybrid_search
+
+    from retrieval.search import hybrid_search
+
+    def _do_search() -> list[dict]:
         return hybrid_search(
             client=_client,
             embed_model=_embed_model,
@@ -130,8 +269,23 @@ def get_nearby_incidents(
             top_k=top_k,
             allowed_crime_types=allowed_crime_types,
         )
+
+    try:
+        return _do_search()
     except Exception as exc:
-        logger.error("Qdrant search failed for (%.4f, %.4f): %s: %s", lat, lng, type(exc).__name__, exc)
+        # WHY reconnect: stale HTTP connection pool after idle periods causes
+        # ResponseHandlingException/SSL_EOF. A fresh client opens a new pool.
+        logger.warning(
+            "Qdrant search failed for (%.4f, %.4f): %s — reconnecting and retrying",
+            lat, lng, exc,
+        )
+        if _reconnect():
+            try:
+                return _do_search()
+            except Exception as retry_exc:
+                logger.error(
+                    "Qdrant retry failed for (%.4f, %.4f): %s", lat, lng, retry_exc
+                )
         return []
 
 
@@ -214,10 +368,12 @@ def get_personalised_incidents(
 
     seen_urls: set[str] = set()
     results: list[dict] = []
+    _reconnected_this_call = False
+
+    from retrieval.search import hybrid_search
 
     for lat, lng in sampled:
         try:
-            from retrieval.search import hybrid_search
             hits = hybrid_search(
                 client=_client,
                 embed_model=_embed_model,
@@ -229,9 +385,31 @@ def get_personalised_incidents(
                 top_k=5,
                 allowed_crime_types=_FEMALE_SAFETY_CATEGORIES,
             )
-        except Exception:
-            logger.exception("personalised search failed for (%.4f, %.4f)", lat, lng)
-            continue
+        except Exception as exc:
+            if not _reconnected_this_call:
+                logger.warning("personalised search failed (%.4f, %.4f): %s — reconnecting", lat, lng, exc)
+                _reconnected_this_call = True
+                if _reconnect():
+                    try:
+                        hits = hybrid_search(
+                            client=_client,
+                            embed_model=_embed_model,
+                            bm25=_bm25,
+                            query_text=situation_text,
+                            lat=lat,
+                            lng=lng,
+                            radius_km=radius_km,
+                            top_k=5,
+                            allowed_crime_types=_FEMALE_SAFETY_CATEGORIES,
+                        )
+                    except Exception as retry_exc:
+                        logger.error("personalised retry failed (%.4f, %.4f): %s", lat, lng, retry_exc)
+                        continue
+                else:
+                    continue
+            else:
+                logger.error("personalised search failed (%.4f, %.4f): %s", lat, lng, exc)
+                continue
         for hit in hits:
             url = hit.get("url", "")
             if url not in seen_urls:

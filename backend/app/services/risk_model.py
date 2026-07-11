@@ -463,3 +463,5 @@ def _score_route_impl(
         per_waypoint_scores=per_waypoint.tolist(),
         n_waypoints=n,
     )
+
+

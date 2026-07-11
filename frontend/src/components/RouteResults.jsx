@@ -2,18 +2,14 @@
 import { useState, useEffect } from 'react'
 import { getPersonalisedIncidents } from '../api/client'
 
-// Risk band badge styles
-const BADGE = {
-  Low:    { bg: 'bg-emerald-100', text: 'text-emerald-800', dot: 'bg-emerald-500' },
-  Medium: { bg: 'bg-amber-100',   text: 'text-amber-800',   dot: 'bg-amber-500'   },
-  High:   { bg: 'bg-red-100',     text: 'text-red-800',     dot: 'bg-red-500'     },
-}
-
-// Route type metadata keyed by route_type field from backend
+// Route type metadata keyed by route_type field from backend.
+// "alternative" is used when GH's safest-profile detour is actually slower than
+// the direct route — calling it "Fastest" in that case would be factually wrong.
 const ROUTE_META = {
-  safest:   { icon: '🛡', label: 'Safest Route',   insight: 'Lowest historical crime exposure'        },
-  balanced: { icon: '⚖', label: 'Balanced Route',  insight: 'Best compromise between safety and time' },
-  fastest:  { icon: '⚡', label: 'Fastest Route',   insight: 'Shortest travel time available'           },
+  safest:      { icon: '🛡', label: 'Safest Route',      insight: 'Lowest historical crime exposure'         },
+  fastest:     { icon: '⚡', label: 'Fastest Route',      insight: 'Shortest travel time available'           },
+  alternative: { icon: '↗', label: 'Alternative Route',  insight: 'Longer path via crime-avoidance routing'  },
+  balanced:    { icon: '⚖', label: 'Balanced Route',     insight: 'Best compromise between safety and time'  },
 }
 
 // Left accent bar color per crime macro
@@ -230,8 +226,7 @@ export default function RouteResults({ routes, selectedIdx, onSelect, personalis
       {/* Route cards */}
       <div className="space-y-2.5">
         {routes.map((route, i) => {
-          const meta  = ROUTE_META[route.route_type] ?? { icon: '↗', label: `Alternative Route ${i + 1}`, insight: 'Additional route option' }
-          const badge = BADGE[route.risk_band] ?? BADGE.Medium
+          const meta = ROUTE_META[route.route_type] ?? { icon: '↗', label: `Route ${i + 1}`, insight: 'Additional route option' }
           return (
             <button
               key={i}
@@ -243,16 +238,10 @@ export default function RouteResults({ routes, selectedIdx, onSelect, personalis
                   : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
               }`}
             >
-              {/* Top row: label + badge */}
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-base leading-none select-none">{meta.icon}</span>
-                  <span className="text-sm font-semibold text-slate-900">{meta.label}</span>
-                </div>
-                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full flex-shrink-0 ${badge.bg}`}>
-                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${badge.dot}`} />
-                  <span className={`text-xs font-semibold ${badge.text}`}>{route.risk_band} Risk</span>
-                </div>
+              {/* Top row: label only */}
+              <div className="flex items-center gap-2">
+                <span className="text-base leading-none select-none">{meta.icon}</span>
+                <span className="text-sm font-semibold text-slate-900">{meta.label}</span>
               </div>
 
               {/* Stats row */}

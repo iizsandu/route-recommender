@@ -11,7 +11,7 @@ from app.config import Settings
 from app.utils.cache import TTLCache
 from app.utils.limiter import limiter
 from app.schemas.routes import RouteRequest, RouteResponse, RouteOption, PersonalisedRequest
-from app.services import geocoding, routing
+from app.services import geocoding, routing, risk_model
 from app.services.risk_model import score_route
 from app.services import retrieval_service
 from app.schemas.routes import IncidentResult
@@ -61,12 +61,22 @@ def _cache_key(
     )
 
 
-def _band(score: float, low: float, high: float) -> str:
-    if score < low:
+def _band(total_score: float, duration_sec: float, low: float, high: float) -> str:
+    # WHY normalize: total_score = Σ(density × dwell_sec), so a 10-min route through
+    # equally-dense streets scores 2× a 5-min route. Normalizing to a 5-min reference
+    # makes banding reflect the *density* of crime on the route (street danger level),
+    # not how long you happen to spend on it.
+    normalized = total_score / max(duration_sec, 1.0) * 300.0
+    if normalized < low:
         return "Low"
-    if score < high:
+    if normalized < high:
         return "Medium"
     return "High"
+
+
+def _avg_density(total_score: float, duration_sec: float) -> float:
+    """Crime density per second — used to select the safest route independently of length."""
+    return total_score / max(duration_sec, 1.0)
 
 
 @router.post("/recommend", response_model=RouteResponse)
@@ -102,66 +112,96 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
             logger.debug("route cache hit", extra={"cache_key": ck})
             return cached
 
-        # ── Fetch both profiles in parallel ──────────────────────────────
-        # WHY parallel: two independent GH requests; sequential would double latency.
-        # WHY two profiles not alternative_route: for tight corridors GH alternative_route
-        # returns only 1 path because no true geometric alternatives exist. Two profiles
-        # always yield two meaningfully different trade-offs.
-        _PROFILES = ["fastest", "safest"]
-        gh_results = await asyncio.gather(
-            *[
-                routing.get_routes(origin=(lat_o, lng_o), dest=(lat_d, lng_d), profile=p)
-                for p in _PROFILES
-            ],
-            return_exceptions=True,
+        # ── Collect routes from both GH profiles ─────────────────────────
+        # GH already computes up to 10 geometrically distinct alternatives per
+        # profile via algorithm=alternative_route. We pool both profiles so the
+        # KDE scorer sees the widest possible set of corridors before picking the
+        # two best routes to return. Previously only fastest_gh[0] was used —
+        # routes[1..9] were thrown away before their KDE scores were checked.
+        all_raw: list[dict] = []
+
+        fastest_gh = await routing.get_routes(
+            origin=(lat_o, lng_o), dest=(lat_d, lng_d), profile="fastest"
         )
+        all_raw.extend(fastest_gh)
 
-        # Collect one route per profile; skip if GH failed for that profile.
-        raw_routes: list[dict] = []
-        for profile, result in zip(_PROFILES, gh_results):
-            if isinstance(result, Exception):
-                logger.warning("GH profile %s failed: %s", profile, result)
-                continue
-            if result:
-                best = dict(result[0])   # copy so we can annotate without mutating cache
-                best["route_type"] = profile
-                raw_routes.append(best)
+        try:
+            safest_gh = await routing.get_routes(
+                origin=(lat_o, lng_o), dest=(lat_d, lng_d), profile="safest"
+            )
+            all_raw.extend(safest_gh)
+        except Exception as exc:
+            logger.warning("GH safest profile failed (non-fatal): %s", exc)
 
-        if not raw_routes:
-            raise HTTPException(status_code=502, detail="GraphHopper returned no routes")
+        # ── Score all unique routes with KDE ──────────────────────────────
+        # Deduplicate across profiles by geometry fingerprint (10-point hash).
+        # _route_fingerprint is a private helper in routing.py — stable enough
+        # to reuse here; if it moves, update this import.
+        from app.services.routing import _route_fingerprint  # noqa: PLC0415
 
-        # ── Score each route ─────────────────────────────────────────────
+        seen_fps: set = set()
         scored: list[tuple[float, dict]] = []
-        for route in raw_routes:
+        for route in all_raw:
+            r = dict(route)
+            fp = _route_fingerprint(r["geometry"]["coordinates"])
+            if fp in seen_fps:
+                continue
+            seen_fps.add(fp)
+
             result = score_route(
-                waypoints=route["waypoints"],
+                waypoints=r["waypoints"],
                 depart_time=depart_time,
-                route_eta_sec=route["duration_sec"],
+                route_eta_sec=r["duration_sec"],
                 kde_weight=settings.KDE_ENSEMBLE_WEIGHT,
                 lgb_weight=settings.LGB_ENSEMBLE_WEIGHT,
             )
-            # WHY log score but not return it: raw float scores for specific
-            # neighbourhoods carry defamation risk. Only the band goes to client.
+            scored.append((result.total_score, r))
             logger.info(
-                "route scored",
-                extra={"score": result.total_score, "distance_m": route["distance_m"]},
+                "candidate route: kde=%.1f  dur=%.0fs  dist=%.0fm",
+                result.total_score, r["duration_sec"], r["distance_m"],
             )
-            scored.append((result.total_score, route))
 
-        # Sort ascending — lowest risk first.
-        scored.sort(key=lambda x: x[0])
+        if not scored:
+            raise HTTPException(status_code=502, detail="GraphHopper returned no routes")
 
-        # WHY re-label by rank: GH profile names ("fastest"/"safest") describe the
-        # routing strategy, not the KDE outcome. After independent scoring, the
-        # "fastest" GH path can outscore "safest" on KDE — producing contradictory
-        # "Safest Route — Medium Risk" vs "Fastest Route — Low Risk" labels.
-        # Reassigning by rank guarantees the displayed label always matches the band.
-        _RANK_LABELS = ["safest", "fastest"]
-        for rank, (_, route) in enumerate(scored):
-            route["route_type"] = _RANK_LABELS[rank] if rank < len(_RANK_LABELS) else "fastest"
+        # ── Pick Fastest (min duration) and Safest (min avg density) ─────
+        # WHY avg density not total score: total = density × duration, so a long
+        # detour through safe streets scores higher than a short route through
+        # the same streets. Avg density = total/duration makes selection
+        # route-length-neutral — we find the corridor with fewest crimes per
+        # second of travel, regardless of how long the journey takes.
+        fastest_score, fastest_route = min(scored, key=lambda x: x[1]["duration_sec"])
+        fastest_route["route_type"] = "fastest"
+
+        safest_score, safest_route = min(
+            scored, key=lambda x: _avg_density(x[0], x[1]["duration_sec"])
+        )
+        safest_route["route_type"] = "safest"
+
+        # Always try to return 2 routes. If fastest and safest are the same route
+        # (same dict object), find the next-best safest from the remaining pool.
+        if safest_route is fastest_route:
+            others = [(s, r) for s, r in scored if r is not fastest_route]
+            if others:
+                safest_score, safest_route = min(
+                    others, key=lambda x: _avg_density(x[0], x[1]["duration_sec"])
+                )
+                safest_route["route_type"] = "safest"
+                final: list[tuple[float, dict]] = [
+                    (fastest_score, fastest_route),
+                    (safest_score, safest_route),
+                ]
+            else:
+                # Only one unique route exists for this trip
+                final: list[tuple[float, dict]] = [(fastest_score, fastest_route)]
+        else:
+            final: list[tuple[float, dict]] = [
+                (fastest_score, fastest_route),
+                (safest_score, safest_route),
+            ]
 
         options = []
-        for score, route in scored:
+        for score, route in final:
             # Retrieve nearby historical incidents for this route.
             # WHY after scoring loop: KDE + Qdrant latencies don't compound —
             # we score all routes first, then fetch incidents for each.
@@ -194,7 +234,7 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
                     geometry=route["geometry"],
                     duration_sec=route["duration_sec"],
                     distance_m=route["distance_m"],
-                    risk_band=_band(score, settings.BAND_LOW_THRESHOLD, settings.BAND_HIGH_THRESHOLD),
+                    risk_band=_band(score, route["duration_sec"], settings.BAND_LOW_THRESHOLD, settings.BAND_HIGH_THRESHOLD),
                     route_type=route.get("route_type", "balanced"),
                     nearby_incidents=incidents,
                 )

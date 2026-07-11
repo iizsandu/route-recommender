@@ -3,9 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import Map, { Source, Layer, NavigationControl, GeolocateControl, Marker, Popup } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
+// Route line color by type — safest gets blue/teal, fastest gets amber.
 const ROUTE_TYPE_COLOR = {
-  safest:   '#22c55e',   // green
-  fastest:  '#ef4444',   // red
+  safest:      '#6366f1',   // indigo
+  fastest:     '#f59e0b',   // amber
+  alternative: '#94a3b8',   // slate
 }
 
 const MACRO_COLOR = {
@@ -531,25 +533,21 @@ function RiskLegend({ activeCat }) {
   )
 }
 
-function RouteLegend() {
+function RouteLegend({ routes }) {
+  const entries = [
+    { type: 'fastest', label: 'Fastest Route' },
+    { type: 'safest',  label: 'Safest Route'  },
+  ].filter(e => routes.some(r => r.route_type === e.type))
+  if (!entries.length) return null
   return (
     <div className="bg-white rounded-2xl shadow-md border border-slate-200 px-4 py-3.5 min-w-[140px]">
-      <p className="text-xs font-semibold text-slate-700 mb-3">Route Types</p>
       <div className="space-y-2">
-        <div className="flex items-center gap-2.5">
-          <span className="text-sm select-none">🛡</span>
-          <div className="flex items-center gap-1.5">
-            <div className="w-6 h-1 rounded-full bg-emerald-500" />
-            <span className="text-xs text-slate-600">Safest</span>
+        {entries.map(e => (
+          <div key={e.type} className="flex items-center gap-2.5">
+            <div className="w-6 h-1 rounded-full" style={{ backgroundColor: ROUTE_TYPE_COLOR[e.type] }} />
+            <span className="text-xs text-slate-600">{e.label}</span>
           </div>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <span className="text-sm select-none">⚡</span>
-          <div className="flex items-center gap-1.5">
-            <div className="w-6 h-1 rounded-full bg-red-400" />
-            <span className="text-xs text-slate-600">Fastest</span>
-          </div>
-        </div>
+        ))}
       </div>
     </div>
   )
@@ -991,7 +989,7 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
       {/* ── Route type legend (bottom-right) ─────────────────────────────── */}
       {routes.length > 0 && mapReady && (
         <div className="absolute bottom-6 right-4 z-10">
-          <RouteLegend />
+          <RouteLegend routes={routes} />
         </div>
       )}
 

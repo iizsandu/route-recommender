@@ -238,3 +238,71 @@ async def get_routes(
         len(routes), profile, origin, dest,
     )
     return routes
+
+
+async def get_routes_via(
+    origin: tuple[float, float],
+    via: tuple[float, float],
+    dest: tuple[float, float],
+    profile: str = "fastest",
+) -> list[dict]:
+    """Request a route from GH that passes through an intermediate via point.
+
+    Uses the fastest profile by default — we want the quickest path THROUGH
+    the safer via point, not a globally crime-penalised route.
+    GH snaps the via point to the nearest road automatically.
+
+    Returns [] (empty list) on any GH error rather than raising, so callers
+    can fall back gracefully to the standard two-profile approach.
+    """
+    key = (
+        f"{round(origin[0], 4)},{round(origin[1], 4)}"
+        f"|via:{round(via[0], 4)},{round(via[1], 4)}"
+        f"|{round(dest[0], 4)},{round(dest[1], 4)}"
+        f"|{profile}"
+    )
+    cached = _cache.get(key)
+    if cached is not None:
+        logger.debug("via-route cache hit for %s", key)
+        return cached
+
+    payload = {
+        "points": [
+            [origin[1], origin[0]],
+            [via[1],    via[0]],    # GH expects [lng, lat] (GeoJSON order)
+            [dest[1],   dest[0]],
+        ],
+        "profile":        profile,
+        "points_encoded": False,
+        "instructions":   False,
+        "locale":         "en",
+        # WHY no alternative_route: GH cannot combine via-point routing with
+        # the alternative_route algorithm in the same request.
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(f"{settings.GRAPHHOPPER_URL}/route", json=payload)
+            resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("GH via-route failed (origin=%s via=%s dest=%s): %s", origin, via, dest, exc)
+        return []
+
+    routes = []
+    for path in resp.json().get("paths", []):
+        geojson = path["points"]
+        routes.append({
+            "geometry":     geojson,
+            "duration_sec": path["time"] / 1000.0,
+            "distance_m":   path["distance"],
+            "waypoints":    _sample_waypoints(geojson["coordinates"]),
+        })
+
+    routes = _deduplicate_routes(routes)
+    if routes:
+        _cache.set(key, routes)
+        logger.info(
+            "via-route: %d routes via (%.4f, %.4f) profile=%s",
+            len(routes), via[0], via[1], profile,
+        )
+    return routes
