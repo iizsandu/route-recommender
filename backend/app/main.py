@@ -10,32 +10,35 @@ Responsibilities (grow with each phase):
 
 import asyncio
 import time
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-import httpx
-from fastapi.middleware.cors import CORSMiddleware
 import uuid
-from app.utils.logger import configure as configure_logging, get_logger, request_id_var
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from app.config import Settings
-from app.utils.limiter import limiter
-from app.routers import routes as routes_router
-from app.routers import risk as risk_router
-from app.routers import search as search_router
-from app.routers import geocode as geocode_router
-from app.services.risk_model import load_model, load_lightgbm_models, reload_from_registry
-from app.services import retrieval_service
 from app.routers import agent as agent_router
-from app.services import whisper_service, agent_service
-
+from app.routers import geocode as geocode_router
+from app.routers import risk as risk_router
+from app.routers import routes as routes_router
+from app.routers import search as search_router
+from app.services import agent_service, retrieval_service, whisper_service
+from app.services.risk_model import (
+    load_lightgbm_models,
+    load_model,
+    reload_from_registry,
+)
+from app.utils.limiter import limiter
+from app.utils.logger import configure as configure_logging
+from app.utils.logger import get_logger, request_id_var
 
 settings = Settings()
 
@@ -146,6 +149,8 @@ async def lifespan(_app: FastAPI):
         provider=settings.LLM_PROVIDER,
         ollama_url=settings.OLLAMA_BASE_URL,
         ollama_model=settings.OLLAMA_MODEL,
+        groq_key=settings.GROQ_API_KEY,
+        groq_model=settings.GROQ_MODEL,
         anthropic_key=settings.ANTHROPIC_API_KEY,
         agent_model=settings.AGENT_MODEL,
     )

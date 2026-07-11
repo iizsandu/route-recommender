@@ -4,7 +4,7 @@ POST /agent/chat  — receive plain text, run CrewAI agent, return answer.
 """
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from app.schemas.routes import AgentResponse

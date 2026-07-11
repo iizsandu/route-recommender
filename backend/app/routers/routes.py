@@ -8,13 +8,17 @@ from fastapi import APIRouter, HTTPException, Request
 from prometheus_client import Counter
 
 from app.config import Settings
+from app.schemas.routes import (
+    IncidentResult,
+    PersonalisedRequest,
+    RouteOption,
+    RouteRequest,
+    RouteResponse,
+)
+from app.services import geocoding, retrieval_service, routing
+from app.services.risk_model import score_route
 from app.utils.cache import TTLCache
 from app.utils.limiter import limiter
-from app.schemas.routes import RouteRequest, RouteResponse, RouteOption, PersonalisedRequest
-from app.services import geocoding, routing, risk_model
-from app.services.risk_model import score_route
-from app.services import retrieval_service
-from app.schemas.routes import IncidentResult
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/routes", tags=["routes"])
@@ -234,7 +238,10 @@ async def recommend(request: Request, req: RouteRequest) -> RouteResponse:
                     geometry=route["geometry"],
                     duration_sec=route["duration_sec"],
                     distance_m=route["distance_m"],
-                    risk_band=_band(score, route["duration_sec"], settings.BAND_LOW_THRESHOLD, settings.BAND_HIGH_THRESHOLD),
+                    risk_band=_band(
+                        score, route["duration_sec"],
+                        settings.BAND_LOW_THRESHOLD, settings.BAND_HIGH_THRESHOLD,
+                    ),
                     route_type=route.get("route_type", "balanced"),
                     nearby_incidents=incidents,
                 )

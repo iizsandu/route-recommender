@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 from app.utils.logger import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -40,19 +40,21 @@ class _HttpxQdrantClient:
             timeout=timeout,
         )
 
-    def _filter_to_dict(self, f) -> Optional[dict]:
+    def _filter_to_dict(self, f) -> dict | None:
         """Convert a qdrant_client Filter object to plain JSON dict."""
         if f is None:
             return None
-        from qdrant_client.models import Filter, FieldCondition, MatchAny, Range
+        from qdrant_client.models import FieldCondition
         must = []
         for cond in (f.must or []):
             if isinstance(cond, FieldCondition):
                 if cond.range is not None:
                     r = cond.range
                     rng = {}
-                    if r.gte is not None: rng["gte"] = r.gte
-                    if r.lte is not None: rng["lte"] = r.lte
+                    if r.gte is not None:
+                        rng["gte"] = r.gte
+                    if r.lte is not None:
+                        rng["lte"] = r.lte
                     must.append({"key": cond.key, "range": rng})
                 elif cond.match is not None:
                     m = cond.match
@@ -64,7 +66,7 @@ class _HttpxQdrantClient:
 
     def _vec_payload(self, query_vector) -> dict:
         """Convert qdrant_client vector arg to REST payload field."""
-        from qdrant_client.models import NamedSparseVector, SparseVector
+        from qdrant_client.models import NamedSparseVector
         if isinstance(query_vector, tuple):
             # ("dense", [float, ...])
             return {"name": query_vector[0], "vector": query_vector[1]}
@@ -206,7 +208,8 @@ def init(
         base = qdrant_url or f"http://{qdrant_host}:{qdrant_port}"
         r = _httpx.get(f"{base.rstrip('/')}/collections", headers=hdr, timeout=5)
         r.raise_for_status()
-        logger.info("Qdrant health check passed (%d collections)", len(r.json().get("result", {}).get("collections", [])))
+        n = len(r.json().get("result", {}).get("collections", []))
+        logger.info("Qdrant health check passed (%d collections)", n)
     except Exception as exc:
         logger.warning("Qdrant health check failed (%s) — search will retry on first call", exc)
 

@@ -1,5 +1,4 @@
 import logging
-import uuid
 from contextvars import ContextVar
 
 import structlog
@@ -28,7 +27,8 @@ def configure(log_format: str, log_level: str) -> None:
 
     structlog.configure(
         processors=shared_processors + [
-            structlog.processors.format_exc_info,  # WHY: renders exception tracebacks into log output; without this exc_info=True is silently swallowed
+            # WHY: renders exception tracebacks into log output; without this exc_info=True is silently swallowed
+            structlog.processors.format_exc_info,
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(

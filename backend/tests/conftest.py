@@ -1,10 +1,10 @@
 # backend/tests/conftest.py
 
 import os
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
-from unittest.mock import MagicMock
 
 # WHY module-level setdefault: routing.py and config.py call Settings() at import
 # time. If the required env vars are absent, pydantic raises ValidationError before

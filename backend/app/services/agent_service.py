@@ -129,6 +129,8 @@ def init(
     provider: str,
     ollama_url: str,
     ollama_model: str,
+    groq_key: str,
+    groq_model: str,
     anthropic_key: str,
     agent_model: str,
 ) -> bool:
@@ -137,6 +139,12 @@ def init(
         if provider == "ollama":
             llm = LLM(model=f"ollama/{ollama_model}", base_url=ollama_url)
             logger.info("Agent LLM: Ollama", model=ollama_model, url=ollama_url)
+        elif provider == "groq":
+            if not groq_key:
+                logger.warning("LLM_PROVIDER=groq but GROQ_API_KEY empty — agent disabled")
+                return False
+            llm = LLM(model=f"groq/{groq_model}", api_key=groq_key)
+            logger.info("Agent LLM: Groq", model=groq_model)
         else:
             if not anthropic_key:
                 logger.warning("LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY empty — agent disabled")

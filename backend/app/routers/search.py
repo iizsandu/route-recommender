@@ -5,8 +5,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services import retrieval_service
 from app.schemas.routes import IncidentResult
+from app.services import retrieval_service
 
 router = APIRouter(prefix="/search", tags=["search"])
 

@@ -1,11 +1,12 @@
 # backend/tests/test_routing.py
 
-import httpx
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import pytest
+
 import app.services.routing as routing_module
-from app.services.routing import _sample_waypoints, _cache_key, _route_fingerprint, _deduplicate_routes
+from app.services.routing import _cache_key, _deduplicate_routes, _route_fingerprint, _sample_waypoints
 from app.utils.cache import TTLCache
 
 # ---------------------------------------------------------------------------
@@ -57,15 +58,16 @@ def test_route_fingerprint_rounds_to_3dp():
 def test_deduplicate_routes_removes_identical_geometry():
     """Two routes with the same coordinate list are deduplicated to one."""
     coords = [[77.2, 28.6], [77.21, 28.61], [77.22, 28.62]]
-    make = lambda: {"geometry": {"coordinates": coords}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
+    def make():
+        return {"geometry": {"coordinates": coords}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
     result = _deduplicate_routes([make(), make()])
     assert len(result) == 1
 
 
 def test_deduplicate_routes_keeps_distinct_geometry():
     """Routes with different coordinate paths are both kept."""
-    route_a = {"geometry": {"coordinates": [[77.2, 28.6], [77.21, 28.61]]}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}
-    route_b = {"geometry": {"coordinates": [[77.2, 28.6], [77.25, 28.65]]}, "duration_sec": 310.0, "distance_m": 1600.0, "waypoints": []}
+    route_a = {"geometry": {"coordinates": [[77.2, 28.6], [77.21, 28.61]]}, "duration_sec": 300.0, "distance_m": 1500.0, "waypoints": []}  # noqa: E501
+    route_b = {"geometry": {"coordinates": [[77.2, 28.6], [77.25, 28.65]]}, "duration_sec": 310.0, "distance_m": 1600.0, "waypoints": []}  # noqa: E501
     result = _deduplicate_routes([route_a, route_b])
     assert len(result) == 2
 

@@ -51,7 +51,7 @@ def _load_heatmap() -> dict:
             "Run `python -m ml.generate_heatmap` to generate it."
         )
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         _HEATMAP_CACHE = json.load(f)
 
     n = len(_HEATMAP_CACHE.get("features", []))

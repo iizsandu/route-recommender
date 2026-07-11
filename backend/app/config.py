@@ -115,15 +115,21 @@ class Settings(BaseSettings):
 
     # --- Voice AI Agent ---
     # LLM_PROVIDER controls which LLM the CrewAI agent uses.
-    # "ollama"    → gemma4:e4b running locally via Ollama (free, private)
+    # "ollama"    → local Ollama (free, private, no internet needed)
+    # "groq"      → Groq Cloud API (free tier, fast, works in production)
     # "anthropic" → Claude via Anthropic API (cloud, needs API key)
-    LLM_PROVIDER: Literal["ollama", "anthropic"] = "ollama"
+    LLM_PROVIDER: Literal["ollama", "groq", "anthropic"] = "ollama"
 
     # Ollama settings (used when LLM_PROVIDER="ollama")
     # host.docker.internal reaches the Windows host from inside a Docker container.
     # Change to http://localhost:11434 when running backend directly on host.
     OLLAMA_BASE_URL: str = "http://host.docker.internal:11434"
     OLLAMA_MODEL: str = "gemma4:e4b"
+
+    # Groq settings (used when LLM_PROVIDER="groq")
+    # Free tier: https://console.groq.com — instant API key, no approval needed.
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     # Anthropic settings (used when LLM_PROVIDER="anthropic")
     ANTHROPIC_API_KEY: str = ""

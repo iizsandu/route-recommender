@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+
 from app.services.geocoding import geocode
 
 router = APIRouter()

@@ -5,14 +5,14 @@ Strategy: mock CosmosClient.from_connection_string so no real Azure
 connection is needed. All tests run offline in CI.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
+import pytest
 from azure.cosmos.exceptions import CosmosHttpResponseError
 
-from app.services.cosmos_client import CosmosReadOnlyClient, _strip_metadata
 from app.config import Settings
+from app.services.cosmos_client import CosmosReadOnlyClient, _strip_metadata
 
 
 # WHY: simulates Cosmos's AsyncItemPaged — an async iterator — without
