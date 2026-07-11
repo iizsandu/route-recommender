@@ -79,7 +79,7 @@ export default function ChatAgent() {
   const isEmpty = messages.length === 0
 
   return (
-    <div className="absolute bottom-8 right-20 z-10 flex flex-col items-end gap-2">
+    <div className="absolute bottom-8 right-20 z-40 flex flex-col items-end gap-2">
 
       {/* ── Chat panel ──────────────────────────────────────────────────── */}
       {open && (

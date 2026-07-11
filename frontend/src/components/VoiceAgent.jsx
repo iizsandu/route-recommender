@@ -141,7 +141,7 @@ export default function VoiceAgent() {
     status === 'recorded'   ? 'Record again'   : ''
 
   return (
-    <div className="absolute bottom-8 right-4 z-10 flex flex-col items-end gap-2">
+    <div className="absolute bottom-8 right-4 z-40 flex flex-col items-end gap-2">
 
       {/* ── Response card ───────────────────────────────────────────────── */}
       {status === 'response' && result && (

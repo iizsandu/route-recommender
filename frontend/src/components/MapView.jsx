@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 import Map, { Source, Layer, NavigationControl, GeolocateControl, Marker, Popup } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import VoiceAgent from './VoiceAgent'
+import ChatAgent from './ChatAgent'
 
 // Route line color by type — safest gets blue/teal, fastest gets amber.
 const ROUTE_TYPE_COLOR = {
@@ -988,12 +990,19 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
         </div>
       )}
 
-      {/* ── Route type legend (bottom-right) ─────────────────────────────── */}
+      {/* ── Route type legend — sits above agent buttons ─────────────────── */}
       {routes.length > 0 && mapReady && (
-        <div className="absolute bottom-6 right-4 z-50">
+        <div className="absolute bottom-28 right-4 z-50">
           <RouteLegend routes={routes} />
         </div>
       )}
+
+      {/* ── Agent buttons (bottom-right) ─────────────────────────────────── */}
+      {/* WHY here not App.jsx: MapLibre's WebGL canvas is GPU-composited and
+          bypasses CSS z-index when siblings are outside this div. Placing them
+          inside MapView's stacking context (after </Map>) makes them visible. */}
+      <VoiceAgent />
+      <ChatAgent />
 
       {/* ── Crime detail panel ───────────────────────────────────────────── */}
       {/* Rendered outside <Map> so it sits above MapLibre's canvas and controls */}
