@@ -544,7 +544,9 @@ function RouteLegend({ routes }) {
       <div className="space-y-2">
         {entries.map(e => (
           <div key={e.type} className="flex items-center gap-2.5">
-            <div className="w-6 h-1 rounded-full" style={{ backgroundColor: ROUTE_TYPE_COLOR[e.type] }} />
+            <svg width="24" height="4" style={{ flexShrink: 0 }}>
+              <line x1="0" y1="2" x2="24" y2="2" stroke={ROUTE_TYPE_COLOR[e.type]} strokeWidth="3" strokeLinecap="round" />
+            </svg>
             <span className="text-xs text-slate-600">{e.label}</span>
           </div>
         ))}
@@ -988,7 +990,7 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
 
       {/* ── Route type legend (bottom-right) ─────────────────────────────── */}
       {routes.length > 0 && mapReady && (
-        <div className="absolute bottom-6 right-4 z-10">
+        <div className="absolute bottom-6 right-4 z-50">
           <RouteLegend routes={routes} />
         </div>
       )}
