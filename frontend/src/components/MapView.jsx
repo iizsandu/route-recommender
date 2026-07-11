@@ -627,6 +627,7 @@ export default function MapView({ routes, selectedIdx, onSelectRoute, pinLocatio
       setAllCrimesLoading(true)
       try {
         const res = await fetch(`${BASE_URL}/risk/crimes-geojson`)
+        if (!res.ok) throw new Error(`crimes-geojson ${res.status}`)
         const data = await res.json()
         setAllCrimesData(data)
       } catch (e) {

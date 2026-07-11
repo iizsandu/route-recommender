@@ -95,6 +95,27 @@ class _HttpxQdrantClient:
         result = resp.json().get("result", [])
         return [_Hit(r["id"], r.get("payload") or {}) for r in result]
 
+    def scroll(self, collection_name: str, scroll_filter=None, limit: int = 500,
+               offset=None, with_payload: bool = True, with_vectors: bool = False):
+        """Replicate QdrantClient.scroll() via direct REST POST.
+        Returns (list[_Hit], next_page_offset | None) matching the qdrant_client tuple API.
+        """
+        payload: dict = {"limit": limit, "with_payload": with_payload, "with_vectors": with_vectors}
+        if offset is not None:
+            payload["offset"] = offset
+        flt = self._filter_to_dict(scroll_filter)
+        if flt:
+            payload["filter"] = flt
+
+        resp = self._client.post(
+            f"{self._base_url}/collections/{collection_name}/points/scroll",
+            json=payload,
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result", {})
+        points = [_Hit(r["id"], r.get("payload") or {}) for r in result.get("points", [])]
+        return points, result.get("next_page_offset")
+
     def close(self) -> None:
         self._client.close()
 
