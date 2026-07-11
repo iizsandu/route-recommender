@@ -49,3 +49,73 @@ flowchart LR
     F & S --> ALG
     ALG --> ROUTES
 ```
+
+---
+
+## How Personalised Incidents Work
+
+```mermaid
+flowchart LR
+
+    subgraph UI["Frontend — RouteResults.jsx"]
+        Q["Questionnaire\n• Travelling with?\n• Transport mode?\n• Destination type?"] --> SIT["Situation sentence\ne.g. 'Woman travelling alone\nby auto to market'"]
+        SIT --> CALL["POST /incidents/personalised\n{ situation, waypoints, radius_km }"]
+    end
+
+    subgraph BACKEND["Backend"]
+        CALL --> RS["retrieval_service\nget_personalised_incidents()"]
+
+        subgraph EMBED["Encode situation text"]
+            RS --> DENSE["bge-small-en-v1.5\n384-dim dense vector"]
+            RS --> SPARSE["BM25 index\nsparse vector"]
+        end
+
+        subgraph QDRANT["Qdrant Cloud — 4,989 incidents"]
+            GEO["Geo filter\n± 2 km of each waypoint"]
+            SEARCH["Hybrid search\ndense + BM25 sparse"]
+            RRF["RRF fusion  k=60\nrank by relevance to situation"]
+        end
+
+        DENSE & SPARSE --> SEARCH
+        GEO --> SEARCH
+        SEARCH --> RRF
+        RRF --> DEDUP["Deduplicate by URL\nkeep top-N"]
+    end
+
+    DEDUP --> MAP["Blue pulsing dots\non map route"]
+    DEDUP --> CARDS["Incident cards\ncrime type · summary · source"]
+```
+
+---
+
+## How the Voice / Text Agent Works
+
+```mermaid
+flowchart LR
+
+    subgraph INPUT["User Input — two paths"]
+        MIC["🎙 Speak\nWebM audio from browser"] --> VOI["POST /agent/query"]
+        TXT["⌨ Type\ntext message"] --> CHT["POST /agent/chat"]
+    end
+
+    subgraph TRANSCRIBE["Voice path only"]
+        VOI --> WH["Whisper base\nCPU transcription"]
+        WH --> TR["transcript text"]
+    end
+
+    CHT --> TR
+
+    subgraph CREWAI["CrewAI — agent_service.query()"]
+        TR --> TASK["Task\n'Answer this safety question\nfrom a Delhi commuter'"]
+        TASK --> LLM["LLM\nGroq llama-3.3-70b\n(prod) / Ollama (local)"]
+
+        LLM -->|"tool call"| T1["get_area_safety\nGeocode → KDE score\n+ Qdrant nearby incidents"]
+        LLM -->|"tool call"| T2["get_route_safety\nGeocode → GraphHopper\n→ KDE score both routes"]
+        LLM -->|"tool call"| T3["search_crime_incidents\nGeocode → Qdrant\nsemantic crime search"]
+
+        T1 & T2 & T3 -->|"tool results"| LLM
+        LLM --> ANS["2-4 sentence answer\nLow / Medium / High bands only"]
+    end
+
+    ANS --> BUBBLE["Chat bubble\nin UI"]
+```
